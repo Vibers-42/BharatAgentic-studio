@@ -25,12 +25,12 @@ from .stages import agent, guardrails, input, output, router
 
 
 def run_pipeline(graph: Graph, question: str, language: str | None = None, model: str | None = None,
-                 user_id: int | None = None, scope: str = "inline") -> Iterator[dict]:
+                 user_id: int | None = None, scope: str = "inline", local_only: bool = False) -> Iterator[dict]:
     """The graph must already have passed validate_graph(). user_id None means usage is not logged.
     scope says whose document chunks the agent may search ("graph:<id>" for a saved graph)."""
     nodes = {t: graph.of_type(t)[0] for t in MAIN_LINE}
     ctx = RunContext(question=question, requested_language=language, requested_model=model, user_id=user_id,
-                     scope=scope)
+                     scope=scope, local_only=local_only)
 
     steps = {
         "input": lambda: input.run(ctx, nodes["input"], nodes["agent"]),

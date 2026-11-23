@@ -87,7 +87,7 @@ def test_fallback_is_logged(client, default_graph, monkeypatch):
     from app.models import gemini
     from app.models.base import QuotaError
 
-    def limited(system, prompt):
+    def limited(system, prompt, **kwargs):
         raise QuotaError("daily", "used up")
         yield  # pragma: no cover
     monkeypatch.setattr(gemini, "stream", limited)
@@ -100,7 +100,7 @@ def test_total_failure_is_logged_as_error(client, default_graph, monkeypatch):
     from app.models import gemini, ollama
     from app.models.base import ProviderError
 
-    def broken(system, prompt):
+    def broken(system, prompt, **kwargs):
         raise ProviderError("down", code="network_error")
         yield  # pragma: no cover
     monkeypatch.setattr(gemini, "stream", broken)
@@ -128,10 +128,11 @@ def test_usage_totals_by_user_model_and_day(client):
     assert len(days) == 1 and days[0]["requests"] == 2
 
 
-def test_models_endpoint_lists_all_three(client):
+def test_models_endpoint_lists_all_four(client):
     body = client.get("/models").json()
     keys = {m["key"]: m for m in body["models"]}
-    assert set(keys) == {"gemini", "groq", "local"}
-    assert keys["local"]["local"] is True and keys["local"]["input_per_million_usd"] == 0
+    assert set(keys) == {"gemini", "groq", "local", "local_small"}
+    for local in ("local", "local_small"):
+        assert keys[local]["local"] is True and keys[local]["input_per_million_usd"] == 0
     assert keys["groq"]["model_id"] == "openai/gpt-oss-120b" and keys["groq"]["priced"] is True
-    assert body["prices_checked_on"] and body["fallback"] == "local"
+    assert body["prices_checked_on"] and body["fallback"] == "local" and body["local_only"] is False

@@ -126,7 +126,7 @@ def test_direct_route_has_no_citations(monkeypatch, spy_retrieve, default_graph)
 
 
 def test_failed_gemini_falls_back_to_local(monkeypatch, default_graph):
-    def broken(system, prompt):
+    def broken(system, prompt, **kwargs):
         raise gemini.GeminiError("GEMINI_API_KEY is not set", code="no_key")
         yield  # pragma: no cover
     monkeypatch.setattr(gemini, "stream", broken)
@@ -142,7 +142,7 @@ def test_all_models_failing_gives_one_clear_error(monkeypatch, default_graph):
     from app.models import ollama
 
     def broken(code):
-        def stream(system, prompt):
+        def stream(system, prompt, **kwargs):
             raise gemini.GeminiError(f"{code} happened", code=code)
             yield  # pragma: no cover
         return stream
@@ -151,7 +151,8 @@ def test_all_models_failing_gives_one_clear_error(monkeypatch, default_graph):
     events = run(default_graph, "hello there")
     error = events[-1]
     assert error["type"] == "error" and error["code"] == "all_providers_failed" and error["stage"] == "agent"
-    assert [(a["model"], a["code"]) for a in error["attempts"]] == [("gemini", "quota_daily"), ("local", "network_error")]
+    assert [(a["model"], a["code"]) for a in error["attempts"]] == [
+        ("gemini", "quota_daily"), ("local", "network_error"), ("local_small", "network_error")]
     assert "Every model failed" in error["message"]
     assert not any(e["type"] == "result" for e in events)
 
@@ -165,7 +166,7 @@ def test_every_answer_carries_tokens_and_cost(default_graph):
     result = run(default_graph, "hello there")[-1]
     assert result["usage"] == {"input_tokens": 10, "output_tokens": 2, "estimated": False}
     assert result["cost"]["priced"] is True and result["cost"]["usd"] > 0 and result["cost"]["api_fee"] is True
-    assert {row["model"] for row in result["comparison"]} == {"gemini", "groq", "local"}
+    assert {row["model"] for row in result["comparison"]} == {"gemini", "groq", "local", "local_small"}
 
 
 def test_no_model_call_means_no_cost(monkeypatch, full_graph):

@@ -18,8 +18,11 @@ def embed(texts: list[str]) -> list[list[float]]:
     for i in range(0, len(texts), BATCH):
         batch = texts[i:i + BATCH]
         try:
+            # num_gpu 0 keeps the small embedding model on the CPU, so it never pushes the chat model
+            # (qwen3:14b) out of a laptop GPU's memory; that reload cost 10-60 s per question.
             r = httpx.post(f"{settings.ollama_url}/api/embed",
-                           json={"model": settings.ollama_embed_model, "input": batch}, timeout=120)
+                           json={"model": settings.ollama_embed_model, "input": batch,
+                                 "options": {"num_gpu": 0}}, timeout=120)
         except httpx.HTTPError as exc:
             raise EmbeddingError(f"Cannot reach Ollama at {settings.ollama_url}: {exc}") from exc
         if r.status_code != 200:

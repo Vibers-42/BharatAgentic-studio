@@ -24,12 +24,21 @@ export default function Chat({ user }) {
   const [busy, setBusy] = useState(false);
   const [models, setModels] = useState([]);
   const [model, setModel] = useState("gemini");
+  const [localOnly, setLocalOnly] = useState(false);   // privacy: no cloud LLM API at all
+  const [serverLocalOnly, setServerLocalOnly] = useState(false); // LOCAL_ONLY=true on the server
   const [notices, setNotices] = useState([]); // fallbacks and discarded partial answers, as they happen
 
   useEffect(() => {
     fetch("/api/models")
       .then((r) => r.json())
-      .then((data) => setModels(data.models))
+      .then((data) => {
+        setModels(data.models);
+        if (data.local_only) {
+          setServerLocalOnly(true);
+          setLocalOnly(true);
+          setModel("local");
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -51,7 +60,7 @@ export default function Chat({ user }) {
       }));
     const graph = buildGraph({ sources: connectedSources, language, model });
     try {
-      await runPipeline({ question, language: language || null, graph, model, user }, (ev) => {
+      await runPipeline({ question, language: language || null, graph, model, user, local_only: localOnly }, (ev) => {
         if (ev.type === "stage") setStages((s) => ({ ...s, [ev.node_id]: ev.status }));
         if (ev.type === "token") setStreamed((t) => t + ev.text);
         if (ev.type === "token_reset") {
@@ -89,8 +98,22 @@ export default function Chat({ user }) {
       </ol>
 
       <form className="ask" onSubmit={ask}>
+        <label className="check privacy" title="Only models running on this computer; nothing is sent to a cloud AI">
+          <input
+            type="checkbox"
+            checked={localOnly}
+            disabled={serverLocalOnly}
+            onChange={(e) => {
+              setLocalOnly(e.target.checked);
+              if (e.target.checked && !models.find((m) => m.key === model)?.local) setModel("local");
+            }}
+          />
+          Local only
+        </label>
         <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model">
-          {(models.length ? models : [{ key: "gemini", label: "Gemini", ready: true }]).map((m) => (
+          {(models.length ? models : [{ key: "gemini", label: "Gemini", ready: true }])
+            .filter((m) => !localOnly || m.local)
+            .map((m) => (
             <option key={m.key} value={m.key}>
               {m.label}{m.local ? " · local" : ""}{m.ready ? "" : " (not set up)"}
             </option>

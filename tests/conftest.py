@@ -31,7 +31,7 @@ def full_graph() -> dict:
     return copy.deepcopy(_load("full.json"))
 
 
-def fake_stream(system: str, prompt: str):
+def fake_stream(system: str, prompt: str, **kwargs):
     yield {"text": "Hello "}
     yield {"text": "there."}
     yield {"usage": {"input_tokens": 10, "output_tokens": 2}}

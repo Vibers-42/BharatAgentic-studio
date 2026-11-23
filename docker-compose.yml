@@ -21,6 +21,10 @@ services:
 
   ollama:
     image: ollama/ollama:0.40.17
+    environment:
+      # Less memory per loaded model, so qwen3:14b and bge-m3 fit side by side on a laptop.
+      OLLAMA_FLASH_ATTENTION: "1"
+      OLLAMA_KV_CACHE_TYPE: q8_0
     volumes:
       - ollama:/root/.ollama
     networks: [data]

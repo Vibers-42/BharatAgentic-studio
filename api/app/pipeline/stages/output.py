@@ -38,6 +38,7 @@ def run(ctx: RunContext, node: Node) -> dict:
         "grounded": ctx.grounded,     # False for direct answers that did not use any source
         "model": gen["label"] if gen else None,
         "model_requested": ctx.model_key or None,
+        "local_only": ctx.local_only,  # privacy: True means no cloud LLM API was allowed for this answer
         "fallback": gen["fallback"] if gen else None,
         "usage": ({"input_tokens": gen["input_tokens"], "output_tokens": gen["output_tokens"],
                    "estimated": gen["tokens_estimated"]} if gen else None),

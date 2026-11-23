@@ -129,6 +129,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        REQUESTS["all"] = REQUESTS.get("all", 0) + 1  # every request, so a test can prove none arrived
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         if "streamGenerateContent" in self.path:
             self._gemini(body)

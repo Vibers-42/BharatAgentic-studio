@@ -32,8 +32,21 @@ The first runs of `scripts/eval_languages.py` found three pipeline bugs, now fix
    ("test amount is refunded" without the "80 percent"); a model cited that half. The overlap is now whole
    sentences.
 
+## Model upgrade (before Phase 6)
+
+- Local models: `qwen3:14b` (main) with `qwen2.5:3b` as backup; Gemini and Groq unchanged. Fallback:
+  chosen model -> qwen3:14b -> qwen2.5:3b.
+- Local-only privacy option (request, agent node, or `LOCAL_ONLY` for the server): cloud models refused,
+  fallback stays local; verified with zero requests reaching the (fake) cloud APIs.
+- Optional `docker-compose.gpu.yml` gives Ollama the NVIDIA GPU; the embedding model stays on the CPU so it
+  never evicts the chat model.
+- Benchmark (eval/RESULTS.md): qwen3:14b 36/36, Groq gpt-oss-120b 36/36, qwen2.5:3b 21/36.
+
 ## Known issues to revisit
 
 - `gemini-2.5-flash` is marked deprecated on Google's pricing page; from 2026-12-01 requests route to
   `gemini-3.5-flash-lite` (same listed price). Switch `GEMINI_MODEL` before the demo if needed.
-- Groq publishes no price for `llama-3.3-70b-versatile` ("Contact Sales"), so Groq answers show no cost.
+- Groq's default is now `openai/gpt-oss-120b` ($0.15 / $0.60 per 1M tokens). `llama-3.3-70b-versatile` is
+  not available to the current key and has no published price ("Contact Sales").
+- Qwen 3 14B needs about 10 GB; on an 8 GB Docker VM it only works well with the GPU override, and its first
+  answer after loading takes about a minute.

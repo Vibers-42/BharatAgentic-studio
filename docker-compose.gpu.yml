@@ -1,0 +1,15 @@
+# Optional: give the ollama container an NVIDIA GPU, so the larger local model (qwen3:14b) can put most of
+# its layers in video memory. Needs Docker Desktop with WSL 2 and a current NVIDIA driver on Windows.
+# Use it on top of the main file:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Without it everything still works on the CPU, just slower.
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -83,3 +83,23 @@ def test_run_needs_exactly_one_graph_source(client, default_graph):
 def test_malformed_graph_is_422(client):
     r = client.post("/pipeline/validate", json={"edges": []})
     assert r.status_code == 422
+
+
+# ---------- local-only privacy option ----------
+def test_local_only_refuses_a_cloud_model_before_running(client, default_graph):
+    r = client.post("/pipeline/run?stream=false", json={"graph": default_graph, "question": "hi", "model": "gemini",
+                                                        "local_only": True})
+    assert r.status_code == 400 and "Local-only mode is on" in r.json()["detail"]
+
+
+def test_local_only_from_the_agent_node(client, default_graph):
+    default_graph["nodes"][3]["config"].update({"model": "groq", "local_only": True})
+    r = client.post("/pipeline/run?stream=false", json={"graph": default_graph, "question": "hi"})
+    assert r.status_code == 400
+
+
+def test_local_only_with_a_local_model_runs_and_is_marked(client, default_graph):
+    r = client.post("/pipeline/run?stream=false", json={"graph": default_graph, "question": "hi there", "model": "local",
+                                                        "local_only": True})
+    result = r.json()["events"][-1]
+    assert r.status_code == 200 and result["local_only"] is True and result["model"].startswith("local:")

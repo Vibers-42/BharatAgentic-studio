@@ -13,6 +13,7 @@ class RunContext:
     requested_model: str | None = None     # from the chat's model dropdown, if set
     user_id: int | None = None             # who asked; None means "do not log usage" (tests)
     scope: str = "inline"                  # whose chunks to search: "graph:<id>" or "inline"
+    local_only: bool = False               # privacy: no cloud LLM API may be called, not even as fallback
 
     # Filled in by the stages, in order.
     language: str = "en"                    # input: language the answer must be in

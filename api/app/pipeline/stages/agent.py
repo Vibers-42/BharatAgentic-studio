@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from ... import usage
 from ...config import settings
 from ...models import generate, pricing
-from ...models.generate import LANGUAGE_NOTES, LOCAL, AllProvidersFailed
+from ...models.generate import LANGUAGE_NOTES, AllProvidersFailed, is_local
 from ...rag import citations, claims, prompt
 from ...rag.retrieve import retrieve
 from ..context import RunContext
@@ -30,11 +30,11 @@ def _log(ctx: RunContext, **row) -> None:
 
 def _account(ctx: RunContext, gen: generate.Generation) -> None:
     """Token counts, cost of this answer, the same tokens priced on every model, and the usage row."""
-    local = gen.model == LOCAL
+    local = is_local(gen.model)
     ctx.generation = gen.to_dict()
     ctx.cost = pricing.cost(gen.model_id, gen.input_tokens, gen.output_tokens, local)
     ctx.cost["local_compute_ms"] = gen.response_ms if local else 0
-    ctx.comparison = pricing.comparison([(k, m, k == LOCAL) for k, m in generate.model_ids().items()],
+    ctx.comparison = pricing.comparison([(k, m, is_local(k)) for k, m in generate.model_ids().items()],
                                         gen.input_tokens, gen.output_tokens)
     note = LANGUAGE_NOTES.get(gen.model)
     ctx.model_note = note if note and ctx.language in ("te", "hi") else None
@@ -51,7 +51,7 @@ def _stream_answer(ctx: RunContext, node: Node, system: str, user: str) -> Itera
     start = time.perf_counter()
     text = ""
     try:
-        for event in generate.stream(ctx.model_key, system, user):
+        for event in generate.stream(ctx.model_key, system, user, ctx.local_only):
             if "text" in event:
                 text += event["text"]
                 yield {"type": "token", "stage": "agent", "node_id": node.id, "text": event["text"],
@@ -67,7 +67,7 @@ def _stream_answer(ctx: RunContext, node: Node, system: str, user: str) -> Itera
         _log(ctx, model=f"{ctx.model_key}:{generate.model_ids()[ctx.model_key]}", model_requested=ctx.model_key,
              input_tokens=0, output_tokens=0, tokens_estimated=False, cost_usd=0, cost_inr=0,
              response_ms=round((time.perf_counter() - start) * 1000), local_compute_ms=0, status="error",
-             error_code=exc.code, fallback_from=ctx.model_key if ctx.model_key != LOCAL else None)
+             error_code=exc.code, fallback_from=ctx.model_key if len(exc.attempts) > 1 else None)
         raise
     ctx.answer = gen.text
     _account(ctx, gen)
@@ -78,10 +78,13 @@ def run(ctx: RunContext, node: Node, graph: Graph) -> Iterator[dict]:
     connected = graph.connected_to(node.id)
     ctx.sources = [n for n in connected if n.type in SOURCE_TYPES]
     ctx.tools = [n for n in connected if n.type in TOOL_TYPES]
-    # The chat's model dropdown wins over the agent node's setting.
+    # The chat's model dropdown wins over the agent node's setting. Local-only can come from the request,
+    # the agent node, or the server (LOCAL_ONLY in .env); any of them is enough.
     ctx.model_key = ctx.requested_model or node.config.get("model", "gemini")
+    ctx.local_only = ctx.local_only or node.config.get("local_only") is True or settings.local_only
     detail = {
         "model_requested": ctx.model_key,
+        "local_only": ctx.local_only,
         "sources": [{"id": n.id, "type": n.type} for n in ctx.sources],
         "tools": [{"id": n.id, "type": n.type} for n in ctx.tools],
     }

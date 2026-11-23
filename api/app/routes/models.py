@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 from ..config import settings
 from ..models import pricing
-from ..models.generate import LANGUAGE_NOTES, LOCAL, PROVIDERS
+from ..models.generate import LANGUAGE_NOTES, LOCAL, PROVIDERS, is_local
 
 router = APIRouter()
 
@@ -26,7 +26,7 @@ def list_models():
     for key, provider in PROVIDERS.items():
         model_id = provider.model_id()
         price = pricing.price_of(model_id) or {}
-        local = key == LOCAL
+        local = is_local(key)
         ready = _local_pulled(model_id) if local else provider.configured()
         out.append({
             "key": key,
@@ -45,5 +45,5 @@ def list_models():
             "note": LANGUAGE_NOTES.get(key),
         })
     return {"models": out, "prices_checked_on": pricing.table()["checked_on"],
-            "usd_to_inr": settings.usd_to_inr, "fallback": LOCAL,
+            "usd_to_inr": settings.usd_to_inr, "fallback": LOCAL, "local_only": settings.local_only,
             "note": pricing.table()["note"]}

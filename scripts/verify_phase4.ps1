@@ -174,9 +174,9 @@ function Restart-Api([string[]]$EnvLines) {
         $override = Join-Path $env:TEMP 'bharatagent-phase4.override.yml'
         (@('services:', '  api:', '    environment:') + ($EnvLines | ForEach-Object { "      $_" })) |
             Set-Content -Path $override -Encoding ASCII
-        docker compose -f docker-compose.yml -f $override up -d api 2>$null | Out-Null
+        docker compose -f docker-compose.yml -f $override up -d --no-deps api 2>$null | Out-Null
     } else {
-        docker compose up -d api 2>$null | Out-Null
+        docker compose up -d --no-deps api 2>$null | Out-Null
     }
     Wait-ApiHealthy
 }
@@ -195,9 +195,9 @@ $fakeProcess = $null
 try {
     # ================= Part A: the api as configured =================
     Write-Host "`n== Models, prices and users"
-    Test-Check 'GET /models lists gemini, groq and local with model ids' {
+    Test-Check 'GET /models lists gemini, groq, local and local_small with model ids' {
         $keys = @($script:Models.models | ForEach-Object { "$($_.key)=$($_.model_id)" }) -join ', '
-        if (@($script:Models.models).Count -eq 3 -and $keys -match 'gemini=' -and $keys -match 'groq=' -and $keys -match 'local=') { $true } else { $keys }
+        if (@($script:Models.models).Count -eq 4 -and $keys -match 'gemini=' -and $keys -match 'groq=' -and $keys -match 'local=' -and $keys -match 'local_small=') { $true } else { $keys }
     }
     Test-Check 'price table has a check date; local model has no API price' {
         $local = @($script:Models.models | Where-Object { $_.key -eq 'local' })[0]
@@ -253,7 +253,7 @@ try {
         $l = $script:LocalRun.Last
         $g = @($l.comparison | Where-Object { $_.model -eq 'gemini' })[0]
         $expected = Get-ExpectedUsd 'gemini' $l.usage.input_tokens $l.usage.output_tokens
-        if (@($l.comparison).Count -eq 3 -and (Test-Near $g.usd $expected)) { $true } else { "gemini comparison $($g.usd), expected $expected" }
+        if (@($l.comparison).Count -eq @($script:Models.models).Count -and (Test-Near $g.usd $expected)) { $true } else { "gemini comparison $($g.usd), expected $expected" }
     }
     Test-Check 'local answer is logged: model, tokens, zero cost, compute time, sources' {
         $row = Get-LatestRow
@@ -405,21 +405,21 @@ try {
     }
 
     # ================= Part C: every provider fails =================
-    Write-Host "`n== Every provider fails: restarting the api with the local model pointed at a model that is not pulled..."
-    if (-not (Restart-Api ($cloudFake + @('OLLAMA_CHAT_MODEL: not-pulled-model:1b')))) { throw 'api did not become healthy' }
+    Write-Host "`n== Every provider fails: restarting the api with both local models pointed at models that are not pulled..."
+    if (-not (Restart-Api ($cloudFake + @('OLLAMA_CHAT_MODEL: not-pulled-model:14b', 'OLLAMA_BACKUP_MODEL: not-pulled-model:1b')))) { throw 'api did not become healthy' }
     Test-Check 'Gemini 500 and local missing: one clear error listing every attempt, no answer' {
         $events = Invoke-Stream "$Web/pipeline/run" (New-RunBody "$QLab FAULT_500" 'gemini')
         $l = $events[-1]
         $tries = @($l.attempts | ForEach-Object { "$($_.model):$($_.code)" }) -join ','
         $results = @($events | Where-Object { $_.type -eq 'result' }).Count
         if ($l.type -eq 'error' -and $l.code -eq 'all_providers_failed' -and $results -eq 0 -and
-            $tries -eq 'gemini:server_error,gemini:server_error,local:model_not_found' -and $l.message -match 'ollama pull') { $true }
+            $tries -eq 'gemini:server_error,gemini:server_error,local:model_not_found,local_small:model_not_found' -and $l.message -match 'ollama pull') { $true }
         else { "type=$($l.type), code=$($l.code), attempts=$tries" }
     }
-    Test-Check 'local model requested and missing: error names only the local attempt' {
+    Test-Check 'local model requested and missing: error names only the two local attempts' {
         $run = Invoke-Run $QLab 'local'
         $tries = @($run.Last.attempts | ForEach-Object { "$($_.model):$($_.code)" }) -join ','
-        if ($run.Last.code -eq 'all_providers_failed' -and $tries -eq 'local:model_not_found') { $true } else { "code=$($run.Last.code), attempts=$tries" }
+        if ($run.Last.code -eq 'all_providers_failed' -and $tries -eq 'local:model_not_found,local_small:model_not_found') { $true } else { "code=$($run.Last.code), attempts=$tries" }
     }
     Test-Check 'total failures are logged as errors with zero tokens' {
         $rows = @((Invoke-Api 'GET' "$Api/usage/recent?user=$User&limit=2").Json)

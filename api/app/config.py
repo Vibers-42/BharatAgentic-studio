@@ -32,7 +32,10 @@ class Settings:
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
     groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     groq_base_url: str = os.getenv("GROQ_BASE_URL", "https://api.groq.com")
-    ollama_chat_model: str = os.getenv("OLLAMA_CHAT_MODEL", "qwen2.5:3b")
+    ollama_chat_model: str = os.getenv("OLLAMA_CHAT_MODEL", "qwen3:14b")
+    ollama_backup_model: str = os.getenv("OLLAMA_BACKUP_MODEL", "qwen2.5:3b")
+    # Privacy: true means no question or document text is ever sent to a cloud LLM API, for anyone.
+    local_only: bool = os.getenv("LOCAL_ONLY", "false").lower() in ("1", "true", "yes")
     ollama_embed_model: str = os.getenv("OLLAMA_EMBED_MODEL", "bge-m3")
 
     # Retrieval: how many chunks reach the model, and the lowest cosine similarity that counts as relevant.

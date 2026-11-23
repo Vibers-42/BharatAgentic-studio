@@ -55,6 +55,7 @@ export default function AnswerCard({ streamed, result, busy }) {
 
       <div className="badges">
         {result.model && <span className="badge">{result.model}</span>}
+        {result.local_only && <span className="badge ok">local only: no cloud AI</span>}
         {result.fallback && (
           <span className="badge warn">fallback from {result.fallback.from} ({result.fallback.code})</span>
         )}

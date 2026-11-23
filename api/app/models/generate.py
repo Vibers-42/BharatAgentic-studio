@@ -2,8 +2,11 @@
 in PROVIDERS. Policy, the same for every provider:
   1. try the chosen model;
   2. if it failed for a passing reason (per-minute limit, network, server error) try it once more;
-  3. if it still fails, fall back to the local model (unless the content itself was refused);
-  4. if the local model fails too, raise AllProvidersFailed listing every attempt.
+  3. if it still fails, fall back to the local models: the main one (qwen3:14b), then the small backup
+     (qwen2.5:3b) - unless the content itself was refused;
+  4. if every model in the chain fails, raise AllProvidersFailed listing every attempt.
+local_only=True (the privacy option) refuses any cloud model and keeps the fallback chain local, so no
+question or document text ever leaves this computer for an LLM API.
 Token counts come from the provider; missing ones are estimated with a tokenizer and labelled so."""
 
 import time
@@ -13,10 +16,32 @@ from dataclasses import asdict, dataclass, field
 from . import gemini, groq, ollama, tokens
 from .base import ProviderError
 
-PROVIDERS = {"gemini": gemini, "groq": groq, "local": ollama}
-LOCAL = "local"
-# Shown on the answer badge: the small local model is weaker in Telugu and Hindi than Gemini.
-LANGUAGE_NOTES = {LOCAL: "Small local model: Telugu and Hindi answers can be weaker than Gemini's."}
+PROVIDERS = {"gemini": gemini, "groq": groq, "local": ollama.main, "local_small": ollama.backup}
+LOCAL = "local"                       # main local model, the first fallback
+LOCAL_MODELS = ["local", "local_small"]  # in fallback order; everything else is a cloud API
+# Shown on the answer badge: the small backup model is weaker in Telugu and Hindi (eval/RESULTS.md).
+LANGUAGE_NOTES = {"local_small": "Small local model: Telugu and Hindi answers are often wrong or in English "
+                                 "(see eval/RESULTS.md)."}
+
+
+class LocalOnlyError(ProviderError):
+    """A cloud model was asked for while the local-only privacy option is on."""
+
+    code = "local_only"
+    fallback = False
+
+
+def is_local(model: str) -> bool:
+    return model in LOCAL_MODELS
+
+
+def chain_for(model: str, local_only: bool = False) -> list[str]:
+    """The models to try, in order: the chosen one, then the local models after it."""
+    if local_only and not is_local(model):
+        raise LocalOnlyError(f"Local-only mode is on, so '{model}' (a cloud API) cannot be used. "
+                             f"Choose one of: {', '.join(LOCAL_MODELS)}.")
+    start = LOCAL_MODELS.index(model) + 1 if is_local(model) else 0
+    return [model] + LOCAL_MODELS[start:]
 MAX_TRIES = 2               # first try + one retry, per provider
 BACKOFF_SECONDS = 2.0       # wait before the retry when the provider gives no Retry-After
 MAX_WAIT_SECONDS = 20.0     # a longer requested wait is not waited for; we fall back instead
@@ -57,13 +82,13 @@ def model_ids() -> dict[str, str]:
     return {key: p.model_id() for key, p in PROVIDERS.items()}
 
 
-def stream(model: str, system: str, prompt: str) -> Iterator[dict]:
+def stream(model: str, system: str, prompt: str, local_only: bool = False) -> Iterator[dict]:
     """Yields {"text": piece} while writing, {"reset": {...}} if a model failed after writing some text
-    (the partial text must be discarded), {"fallback": {...}} when switching to the local model,
+    (the partial text must be discarded), {"fallback": {...}} when switching to a local model,
     and finally {"done": Generation}."""
     if model not in PROVIDERS:
         raise ValueError(f"Unknown model '{model}'. Choose one of: {', '.join(PROVIDERS)}.")
-    chain = [model] if model == LOCAL else [model, LOCAL]
+    chain = chain_for(model, local_only)
     attempts: list[dict] = []
     fallback = None
 
@@ -116,9 +141,9 @@ def _finish(key, provider, requested, system, prompt, text, usage, start, attemp
                       attempts=attempts, fallback=fallback)
 
 
-def generate(model: str, system: str, prompt: str) -> Generation:
+def generate(model: str, system: str, prompt: str, local_only: bool = False) -> Generation:
     """Non-streaming form: returns the text, token counts (actual or estimated) and response time."""
-    for event in stream(model, system, prompt):
+    for event in stream(model, system, prompt, local_only):
         if "done" in event:
             return event["done"]
     raise AssertionError("stream() ended without a result")

@@ -263,7 +263,7 @@ try {
             '      GEMINI_API_KEY: fake-key-for-local-streaming-test'
         ) | Set-Content -Path $override -Encoding ASCII
         Write-Host "Starting fake Gemini on :$FakePort and restarting api against it..."
-        docker compose -f docker-compose.yml -f $override up -d api 2>$null | Out-Null
+        docker compose -f docker-compose.yml -f $override up -d --no-deps api 2>$null | Out-Null
         if (-not (Wait-ApiHealthy)) { Write-Host 'api did not become healthy.' -ForegroundColor Red }
     }
 
@@ -428,7 +428,7 @@ finally {
     if ($UseFakeGemini) {
         Write-Host "`nRestoring the normal api (without the fake Gemini)..."
         if ($fakeProcess) { Stop-Process -Id $fakeProcess.Id -Force -ErrorAction SilentlyContinue }
-        docker compose up -d api 2>$null | Out-Null
+        docker compose up -d --no-deps api 2>$null | Out-Null
         if (Wait-ApiHealthy) { Write-Host 'api restored.' } else { Write-Host 'api did not become healthy; run: docker compose up -d api' -ForegroundColor Red }
     }
 }

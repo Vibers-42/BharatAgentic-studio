@@ -32,8 +32,15 @@
       "source": "https://console.groq.com/docs/models",
       "status": "Groq shows 'Contact Sales' instead of a price for this model, so no cost is estimated. Fill in the two prices if Groq publishes them."
     },
+    "qwen3:14b": {
+      "label": "Qwen 3 14B (local)",
+      "input_per_million": 0,
+      "output_per_million": 0,
+      "local": true,
+      "status": "Main local model, in the ollama container: no API fee, but it uses this computer's GPU/CPU, electricity and time."
+    },
     "qwen2.5:3b": {
-      "label": "Qwen 2.5 3B (local)",
+      "label": "Qwen 2.5 3B (local backup)",
       "input_per_million": 0,
       "output_per_million": 0,
       "local": true,

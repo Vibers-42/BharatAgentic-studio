@@ -153,7 +153,7 @@ def scripted(*outcomes):
     ("partial", exc) yields some text first and then raises exc."""
     calls = []
 
-    def stream(system, prompt):
+    def stream(system, prompt, **kwargs):
         outcome = outcomes[min(len(calls), len(outcomes) - 1)]
         calls.append(outcome)
         if isinstance(outcome, tuple):
@@ -246,12 +246,53 @@ def test_safety_refusal_is_not_sent_to_another_model(monkeypatch, waits):
     assert err.value.code == "safety" and local.calls == []
 
 
-def test_local_requested_and_failing_has_no_other_fallback(monkeypatch, waits):
-    fake = scripted(ProviderError("not pulled", code="model_not_found"))
-    monkeypatch.setattr(ollama, "stream", fake)
+def test_main_local_model_falls_back_to_the_small_one(monkeypatch, waits):
+    calls = []
+
+    def stream(system, prompt, model=None):
+        calls.append(model)
+        if model == ollama.settings.ollama_chat_model:
+            raise ProviderError("not pulled", code="model_not_found")
+        yield {"text": "small answer"}
+        yield {"usage": {"input_tokens": 5, "output_tokens": 2}}
+    monkeypatch.setattr(ollama, "stream", stream)
+    _, gen = run_generate("local")
+    assert gen.model == "local_small" and gen.fallback["from"] == "local" and gen.text == "small answer"
+    assert calls == [ollama.settings.ollama_chat_model, ollama.settings.ollama_backup_model]
+
+
+def test_small_local_model_has_nothing_after_it(monkeypatch, waits):
+    monkeypatch.setattr(ollama, "stream", scripted(ProviderError("not pulled", code="model_not_found")))
     with pytest.raises(generate.AllProvidersFailed) as err:
-        run_generate("local")
-    assert [a["model"] for a in err.value.attempts] == ["local"]
+        run_generate("local_small")
+    assert [a["model"] for a in err.value.attempts] == ["local_small"]
+
+
+@pytest.mark.parametrize("model,chain", [
+    ("gemini", ["gemini", "local", "local_small"]),
+    ("groq", ["groq", "local", "local_small"]),
+    ("local", ["local", "local_small"]),
+    ("local_small", ["local_small"]),
+])
+def test_fallback_chains(model, chain):
+    assert generate.chain_for(model) == chain
+
+
+def test_local_only_refuses_cloud_models_and_keeps_the_chain_local():
+    assert generate.chain_for("local", local_only=True) == ["local", "local_small"]
+    for cloud in ("gemini", "groq"):
+        with pytest.raises(generate.LocalOnlyError):
+            generate.chain_for(cloud, local_only=True)
+
+
+def test_local_only_never_calls_a_cloud_provider(monkeypatch, waits):
+    cloud_calls = []
+    monkeypatch.setattr(gemini, "stream", lambda s, p, **k: cloud_calls.append("gemini") or iter(()))
+    monkeypatch.setattr(groq, "stream", lambda s, p, **k: cloud_calls.append("groq") or iter(()))
+    monkeypatch.setattr(ollama, "stream", scripted(ProviderError("down", code="network_error", retryable=True)))
+    with pytest.raises(generate.AllProvidersFailed) as err:
+        list(generate.stream("local", "s", "p", local_only=True))
+    assert cloud_calls == [] and {a["model"] for a in err.value.attempts} == {"local", "local_small"}
 
 
 def test_everything_failing_lists_every_attempt(monkeypatch, waits):
@@ -259,7 +300,8 @@ def test_everything_failing_lists_every_attempt(monkeypatch, waits):
     monkeypatch.setattr(ollama, "stream", scripted(ProviderError("no ollama", code="network_error", retryable=True)))
     with pytest.raises(generate.AllProvidersFailed) as err:
         run_generate("groq")
-    assert [(a["model"], a["try"]) for a in err.value.attempts] == [("groq", 1), ("groq", 2), ("local", 1), ("local", 2)]
+    assert [(a["model"], a["try"]) for a in err.value.attempts] == [
+        ("groq", 1), ("groq", 2), ("local", 1), ("local", 2), ("local_small", 1), ("local_small", 2)]
     assert err.value.code == "all_providers_failed"
 
 
@@ -331,3 +373,33 @@ def test_comparison_prices_the_same_tokens_on_every_model():
 def test_default_groq_model_is_priced():
     c = pricing.cost("openai/gpt-oss-120b", 1_000_000, 1_000_000)
     assert c["usd"] == pytest.approx(0.15 + 0.60) and c["priced"] is True
+
+
+# ---------- local models ----------
+def test_thinking_blocks_are_never_streamed():
+    state = {"inside": False}
+    pieces = ["<think>", "Let me check the", " sources.</think>", "80 percent", " is refunded [1]."]
+    assert "".join(ollama._drop_thinking(p, state) for p in pieces) == "80 percent is refunded [1]."
+    assert ollama._drop_thinking("Plain answer.", {"inside": False}) == "Plain answer."
+
+
+@pytest.mark.real_models
+def test_qwen3_is_asked_not_to_think(server, monkeypatch):
+    seen = {}
+    real_stream = ollama.httpx.stream
+
+    def spy(method, url, json=None, **kw):
+        seen.update(json)
+        return real_stream(method, url, json=json, **kw)
+    monkeypatch.setattr(ollama.httpx, "stream", spy)
+    list(ollama.stream("s", SOURCES, model="qwen3:14b"))
+    assert seen["think"] is False
+    seen.clear()
+    list(ollama.stream("s", SOURCES, model="qwen2.5:3b"))
+    assert "think" not in seen
+
+
+def test_two_local_models_are_configured():
+    assert generate.PROVIDERS["local"].model_id() == ollama.settings.ollama_chat_model
+    assert generate.PROVIDERS["local_small"].model_id() == ollama.settings.ollama_backup_model
+    assert generate.is_local("local") and generate.is_local("local_small") and not generate.is_local("groq")

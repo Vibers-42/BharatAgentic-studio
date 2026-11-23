@@ -42,7 +42,8 @@ function Test-Check([string]$Name, [scriptblock]$Test) {
 }
 
 $script:Http = New-Object System.Net.Http.HttpClient
-$script:Http.Timeout = [TimeSpan]::FromSeconds(30)
+# Generous: a direct answer can fall back to the local qwen3:14b, whose first load takes about a minute.
+$script:Http.Timeout = [TimeSpan]::FromSeconds(600)
 
 # Sends a request and returns status code, content type, the body as UTF-8 text, and parsed JSON.
 function Invoke-Api([string]$Method, [string]$Url, [string]$Body = $null) {

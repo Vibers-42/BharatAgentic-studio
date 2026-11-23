@@ -9,6 +9,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ..config import settings
+from ..models.generate import is_local
 from ..pipeline.engine import run_pipeline
 from ..pipeline.graph import MODELS, Graph
 from ..pipeline.validate import validate_graph
@@ -26,8 +28,9 @@ class RunRequest(BaseModel):
     language: str | None = None   # "en", "te" or "hi"; None lets the input stage decide
     graph: Graph | None = None    # send the graph inline ...
     graph_id: int | None = None   # ... or the id of a saved graph
-    model: str | None = None      # "gemini", "groq" or "local"; None uses the agent node's setting
+    model: str | None = None      # "gemini", "groq", "local" or "local_small"; None uses the agent node's setting
     user: str = "demo"            # whose usage this is (the user switcher)
+    local_only: bool = False      # privacy: never call a cloud LLM API for this question, not even as fallback
 
 
 def resolve_user(name: str) -> int:
@@ -63,10 +66,18 @@ def run(req: RunRequest, stream: bool = True):
 
     if req.model is not None and req.model not in MODELS:
         raise HTTPException(400, f"Unknown model '{req.model}'. Choose one of: {', '.join(MODELS)}.")
+    # Local-only (from the request, the agent node, or LOCAL_ONLY in .env): refuse a cloud model up front,
+    # so not even the question is sent anywhere.
+    agent = graph.of_type("agent")[0]
+    local_only = req.local_only or agent.config.get("local_only") is True or settings.local_only
+    model = req.model or agent.config.get("model", "gemini")
+    if local_only and not is_local(model):
+        raise HTTPException(400, f"Local-only mode is on, so the cloud model '{model}' cannot be used. "
+                                 "Choose 'local' or 'local_small'.")
     uid = resolve_user(req.user)  # 400 for an unknown user, before anything runs
 
     # A saved graph searches only its own chunks; a graph sent with the question uses the "inline" scope.
-    events = run_pipeline(graph, req.question, req.language, req.model, uid, graph_scope(req.graph_id))
+    events = run_pipeline(graph, req.question, req.language, req.model, uid, graph_scope(req.graph_id), local_only)
     if not stream:
         return {"events": list(events)}
     return StreamingResponse(

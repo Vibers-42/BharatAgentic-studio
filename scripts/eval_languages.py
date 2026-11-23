@@ -187,6 +187,13 @@ def write_markdown(stamp, models, languages, questions, rows, older=None):
     def sel(model, lang, data=None):
         return [r for r in (data or rows) if r["model"] == model and r["lang"] == lang]
 
+    def name(model):
+        """'local (qwen3:14b)': the key plus the model that actually answered, so runs stay comparable
+        when a key is pointed at a different model."""
+        ids = {r["answered_by"].split(":", 1)[1] for r in rows
+               if r["model"] == model and r.get("answered_by") and r["answered_by"].startswith(model + ":")}
+        return f"{model} ({', '.join(sorted(ids))})" if ids else model
+
     def score_cell(model, lang):
         rs = sel(model, lang)
         judged = [r for r in rs if category(r) != "quota_blocked"]
@@ -210,13 +217,13 @@ def write_markdown(stamp, models, languages, questions, rows, older=None):
              "## Score per model and language (correct / judged)", "",
              "| Model | " + " | ".join(languages) + " |", "|---|" + "---|" * len(languages)]
     for m in models:
-        lines.append(f"| {m} | " + " | ".join(score_cell(m, l) for l in languages) + " |")
+        lines.append(f"| {name(m)} | " + " | ".join(score_cell(m, l) for l in languages) + " |")
     lines += ["", "## Breakdown", "", "| Model | Language | " + " | ".join(CATEGORIES) + " |",
               "|---|---|" + "---|" * len(CATEGORIES)]
     for m in models:
         for l in languages:
             counts = [sum(category(r) == c for r in sel(m, l)) for c in CATEGORIES]
-            lines.append(f"| {m} | {l} | " + " | ".join(str(c) for c in counts) + " |")
+            lines.append(f"| {name(m)} | {l} | " + " | ".join(str(c) for c in counts) + " |")
     lines += ["", "## Every question", "", "yes = correct, wrong = incorrect, IDK = unsupported, lang = wrong language.", "",
               "| Question | " + " | ".join(f"{m} {l}" for m in models for l in languages) + " |",
               "|---|" + "---|" * (len(models) * len(languages))]

@@ -43,6 +43,7 @@ powershell -ExecutionPolicy Bypass -File scripts\verify_phase2.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase3.ps1                  # add -UseFakeGemini without a key
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase4.ps1                  # fallback and failure injection
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase5.ps1                  # connectors, isolation, claims
+powershell -ExecutionPolicy Bypass -File scripts\verify_models.ps1                  # 4 models, fallback chain, local-only
 ```
 
 ## Pipeline graph and API
@@ -107,7 +108,29 @@ is reported at once with no retry. The pipeline's error event then carries `code
 
 Every model sits behind one `generate()` ([api/app/models/generate.py](api/app/models/generate.py));
 each provider is one small file: [gemini.py](api/app/models/gemini.py), [groq.py](api/app/models/groq.py),
-[ollama.py](api/app/models/ollama.py) (local `qwen2.5:3b`).
+[ollama.py](api/app/models/ollama.py). Four choices, all through the same retrieval, citations, claim
+check, token counts, cost and usage log:
+
+| Key | Model | Where it runs |
+|---|---|---|
+| `gemini` | Gemini Flash (`GEMINI_MODEL`, default `gemini-2.5-flash`) | Google API |
+| `groq` | GPT-OSS 120B (`openai/gpt-oss-120b`) | Groq API |
+| `local` | Qwen 3 14B (`qwen3:14b`, about 10 GB) | this computer, Ollama |
+| `local_small` | Qwen 2.5 3B (`qwen2.5:3b`), the backup | this computer, Ollama |
+
+Fallback order: the chosen model, then `local`, then `local_small`.
+
+**Running Qwen 3 14B:** pull it once (`docker compose exec ollama ollama pull qwen3:14b`). With an NVIDIA
+GPU, start with `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d` so part of the
+model sits in video memory (on a 6 GB RTX 3050: about 43% GPU, 57% CPU; ~5-10 s per answer once loaded,
+about 60-75 s for the first answer while the model loads). Without a GPU it runs on the CPU, much slower.
+The embedding model is kept on the CPU so it never pushes the chat model out of GPU memory.
+
+**Local-only privacy option:** tick "Local only" in the chat (or send `"local_only": true`, or set
+`"local_only": true` on the agent node, or `LOCAL_ONLY=true` in `.env` for everyone). Then a cloud model
+is refused with an error before anything runs, and the fallback chain stays local, so no question or
+document text is sent to any LLM API. Fetching a docs link or GitHub repo you add is still a download
+from that site.
 
 - **Choose a model** per question in the chat dropdown (or `"model"` in `/pipeline/run`); the agent
   node's `model` setting is the default. `GET /models` lists the models, whether each is ready, and prices.
@@ -179,18 +202,26 @@ web/                 React frontend
 - Cost is an estimate from a price table, not a bill.
 - A local model has no API fee, but still uses the laptop's electricity and time.
 
-### Limits of the small local model (qwen2.5:3b), measured
+### Model quality and speed, measured
 
-From [eval/RESULTS.md](eval/RESULTS.md) (2026-11-23, 12 questions per language, same sources for every model):
+From [eval/RESULTS.md](eval/RESULTS.md) (run of 2026-11-23 21:08; 12 questions per language over the same
+sample PDFs, same pipeline, citations and claim check for every model). Times are the median per answer,
+measured on this laptop (RTX 3050 6 GB, 8 GB for Docker), with the local model already loaded:
 
-| Model | English | Telugu | Hindi |
-|---|---|---|---|
-| Groq `openai/gpt-oss-120b` | 12/12 | 12/12 | 12/12 |
-| Local `qwen2.5:3b` | 11/12 | **1/12** | 7/12 |
-| Gemini `gemini-2.5-flash` | not measured: daily free quota used up that day | | |
+| Model | English | Telugu | Hindi | Median time (en / te / hi) |
+|---|---|---|---|---|
+| Groq `openai/gpt-oss-120b` | 12/12 | 12/12 | 12/12 | 0.7 / 1.0 / 0.8 s |
+| Local `qwen3:14b` (GPU + CPU) | **12/12** | **12/12** | **12/12** | 4.6 / 13.8 / 10.2 s |
+| Local backup `qwen2.5:3b` | 11/12 | 3/12 | 7/12 | 0.6 / 0.9 / 0.8 s |
+| Gemini `gemini-2.5-flash` | 1/1 answered | not measured | not measured | daily free quota used up after 1 request |
 
-What goes wrong with the local model, in its own answers:
-- **Answers in English** to Telugu or Hindi questions (5 of 12 in Telugu, 3 of 12 in Hindi). The app flags these
+Qwen 3 14B matches Groq on every question in all three languages. Its costs are time and memory: the
+first answer after it is loaded takes about 50-75 s (it is about 10 GB and has to be read into the GPU and
+RAM), Telugu answers take longer because Telugu needs many more tokens, and it needs the GPU override
+(`docker-compose.gpu.yml`) to be practical on a laptop.
+
+What goes wrong with the small backup model (qwen2.5:3b), in its own answers:
+- **Answers in English** to Telugu or Hindi questions (3 of 12 each in the last run). The app flags these
   on the answer ("not written in Telugu") instead of hiding them.
 - **Wrong numbers or a different fact** in Telugu and Hindi: "3 days" instead of 7, or the gate time when
   asked about visiting hours. The claim check removes a number that is not in the cited source, but it
@@ -199,9 +230,9 @@ What goes wrong with the local model, in its own answers:
   fee (a true, cited fact, but not what was asked).
 - **Gives up** ("I don't know") on some answerable questions, or writes sentences without citations,
   which the claim check then removes.
-- It runs on the laptop's CPU: about 3-25 seconds per answer here.
 
-Use it as the always-available fallback and for English; use Gemini or Groq for Telugu and Hindi.
+So: Qwen 3 14B (or Groq/Gemini) for real use, including Telugu and Hindi; the 3B model only as the
+always-available backup. The answer badge warns about the 3B model in Telugu and Hindi.
 The Telugu and Hindi test questions were written for this project and should be reviewed by a native speaker.
 
 See [PHASES.md](PHASES.md) for the build plan.

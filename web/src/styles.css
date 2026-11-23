@@ -256,3 +256,12 @@ body {
   flex: 1;
   padding: 5px 8px;
 }
+
+/* Local-only privacy switch */
+.privacy {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  white-space: nowrap;
+}

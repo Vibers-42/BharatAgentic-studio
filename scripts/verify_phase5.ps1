@@ -294,7 +294,7 @@ try {
     Test-Check 'eval results are recorded per model and language (eval/RESULTS.md)' {
         if (-not (Test-Path 'eval\RESULTS.md')) { return 'run: python scripts\eval_languages.py' }
         $text = Get-Content 'eval\RESULTS.md' -Raw -Encoding UTF8
-        if ($text -match '\| Model \| en \| te \| hi \|' -and $text -match '\| local \|') { $true } else { 'RESULTS.md has no per-model table' }
+        if ($text -match '\| Model \| en \| te \| hi \|' -and $text -match '\| local[ (|]') { $true } else { 'RESULTS.md has no per-model table' }
     }
 
     if ($SkipFakeModel) { throw [System.OperationCanceledException]::new('skip') }
@@ -307,7 +307,7 @@ try {
     $override = Join-Path $env:TEMP 'bharatagent-phase5.override.yml'
     @('services:', '  api:', '    environment:', "      GEMINI_BASE_URL: http://host.docker.internal:$FakePort", '      GEMINI_API_KEY: fake-key',
       "      GROQ_BASE_URL: http://host.docker.internal:$FakePort", '      GROQ_API_KEY: fake-key') | Set-Content -Path $override -Encoding ASCII
-    docker compose -f docker-compose.yml -f $override up -d api 2>$null | Out-Null
+    docker compose -f docker-compose.yml -f $override up -d --no-deps api 2>$null | Out-Null
     if (-not (Wait-ApiHealthy)) { throw 'api did not become healthy with the fake model' }
     $refundGraph = $script:GraphA
 
@@ -332,7 +332,7 @@ finally {
     if (-not $SkipFakeModel) {
         if ($fakeProcess) { Stop-Process -Id $fakeProcess.Id -Force -ErrorAction SilentlyContinue }
         Write-Host "`nRestoring the normal api..."
-        docker compose up -d api 2>$null | Out-Null
+        docker compose up -d --no-deps api 2>$null | Out-Null
         if (Wait-ApiHealthy) { Write-Host 'api restored.' } else { Write-Host 'api did not become healthy; run: docker compose up -d api' -ForegroundColor Red }
     }
 }
