@@ -1,0 +1,61 @@
+/* Global styles for the web app. */
+:root {
+  --bg: #f7f7f5;
+  --text: #1d1d1b;
+  --muted: #6b6b66;
+  --up: #1f9d55;
+  --down: #c0392b;
+  font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans Telugu", "Noto Sans Devanagari", sans-serif;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.page {
+  max-width: 560px;
+  margin: 48px auto;
+  padding: 0 16px;
+}
+
+.sub {
+  color: var(--muted);
+  margin-top: -8px;
+}
+
+.error {
+  color: var(--down);
+}
+
+.status {
+  list-style: none;
+  padding: 0;
+  line-height: 2;
+}
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 10px;
+}
+
+.dot {
+  background: #c9c9c4;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.dot.up {
+  background: var(--up);
+}
+
+.dot.down {
+  background: var(--down);
+}
