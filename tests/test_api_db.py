@@ -65,6 +65,31 @@ def test_vector_column_round_trip(client):
     assert row[1] == pytest.approx(0.0)
 
 
+def test_save_load_and_run_saved_graph(client, full_graph):
+    r = client.post("/graphs", json={"name": "test pipeline", "graph": full_graph})
+    assert r.status_code == 201
+    graph_id = r.json()["id"]
+
+    assert client.get(f"/graphs/{graph_id}").json() == full_graph  # "from" keys survive the round trip
+    assert any(g["id"] == graph_id for g in client.get("/graphs").json())
+
+    run = client.post("/pipeline/run?stream=false", json={"graph_id": graph_id, "question": "refund policy?"})
+    assert run.json()["events"][-1]["sources"] == ["s1", "s2"]
+
+
+def test_invalid_graph_is_not_saved(client, full_graph):
+    full_graph["edges"] = [e for e in full_graph["edges"] if e["from"] != "t1"]
+    r = client.post("/graphs", json={"name": "broken", "graph": full_graph})
+    assert r.status_code == 422
+    assert r.json()["detail"]["errors"][0]["node_id"] == "t1"
+
+
+def test_unknown_graph_id_is_404(client):
+    assert client.get("/graphs/999999").status_code == 404
+    r = client.post("/pipeline/run", json={"graph_id": 999999, "question": "hi"})
+    assert r.status_code == 404
+
+
 def test_schema_is_safe_to_rerun(client):
     from app.db import init_db, close_db
 

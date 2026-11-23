@@ -1,0 +1,19 @@
+{
+  "nodes": [
+    {"id": "n1", "type": "input", "config": {}},
+    {"id": "n2", "type": "guardrails", "config": {"block": ["empty", "abuse", "off_topic"]}},
+    {"id": "n3", "type": "router", "config": {}},
+    {"id": "n4", "type": "agent", "config": {"model": "gemini", "language": "te"}},
+    {"id": "n5", "type": "output", "config": {}},
+    {"id": "s1", "type": "source_repo", "config": {"url": "https://github.com/example/repo"}},
+    {"id": "s2", "type": "source_doc", "config": {"file": "refund-policy.pdf"}},
+    {"id": "t1", "type": "tool_calculator", "config": {}},
+    {"id": "t2", "type": "tool_mcp", "config": {"server": "orders-db", "mode": "read_only"}}
+  ],
+  "edges": [
+    {"from": "n1", "to": "n2"}, {"from": "n2", "to": "n3"},
+    {"from": "n3", "to": "n4"}, {"from": "n4", "to": "n5"},
+    {"from": "s1", "to": "n4"}, {"from": "s2", "to": "n4"},
+    {"from": "t1", "to": "n4"}, {"from": "t2", "to": "n4"}
+  ]
+}

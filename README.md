@@ -39,7 +39,38 @@ On Windows (PowerShell, Docker Desktop):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase1.ps1
+powershell -ExecutionPolicy Bypass -File scripts\verify_phase2.ps1
 ```
+
+## Pipeline graph and API
+
+The canvas saves the pipeline as JSON: `nodes` (`id`, `type`, `config`) and `edges` (`from`, `to`).
+Examples: [default.json](api/app/pipeline/examples/default.json) (the five blocks) and
+[full.json](api/app/pipeline/examples/full.json) (the handoff example with 2 sources and 2 tools).
+
+Node types: `input`, `guardrails`, `router`, `agent`, `output`, `source_repo`, `source_doc`
+(a file, or a docs link with `{"url": ...}`), `tool_calculator`, `tool_mcp`.
+
+Validation rules (every broken rule is reported, each with its own code and message):
+exactly one of each main block; the main line input → guardrails → router → agent → output has no
+gaps or shortcuts; every source and tool has an edge into the agent and only into the agent;
+`tool_mcp` must be `read_only` unless `allow_write: true`; agent language is `en`, `te` or `hi`.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /pipeline/default` | The five-block starting graph |
+| `POST /pipeline/validate` | `{valid, errors[]}` for a graph |
+| `POST /pipeline/run` | Runs `{question, language?, graph \| graph_id}` and streams Server-Sent Events; `?stream=false` returns JSON. An invalid graph gets 422 before anything runs |
+| `POST /graphs`, `GET /graphs`, `GET /graphs/{id}` | Save (valid graphs only), list and load pipelines |
+
+Each stage sends `running` then `done` (or `blocked` / `skipped`), then one `result` event:
+
+```
+event: stage
+data: {"type": "stage", "stage": "router", "node_id": "n3", "status": "done", "ms": 0, "detail": {"route": "search", ...}}
+```
+
+In Phase 2 the agent returns a labelled placeholder (`simulated: true`); no model is called yet.
 
 ## Containers
 

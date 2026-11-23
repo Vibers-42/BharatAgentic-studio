@@ -1,0 +1,53 @@
+"""Runs a validated graph for one question: input, guardrails, router, agent, output, in order.
+Yields an event before and after every stage so the frontend can light up that node, then a result.
+
+Event shapes:
+  {"type": "stage", "stage": "router", "node_id": "n3", "status": "running"}
+  {"type": "stage", "stage": "router", "node_id": "n3", "status": "done", "ms": 1, "detail": {...}}
+  status can also be "blocked" (guardrails stopped it) or "skipped" (a later stage after a block)
+  {"type": "error", "stage": "agent", "node_id": "n4", "message": "..."}
+  {"type": "result", ...output stage fields...}
+"""
+
+import time
+from collections.abc import Iterator
+
+from .context import RunContext
+from .graph import MAIN_LINE, Graph
+from .stages import agent, guardrails, input, output, router
+
+
+def run_pipeline(graph: Graph, question: str, language: str | None = None) -> Iterator[dict]:
+    """The graph must already have passed validate_graph()."""
+    nodes = {t: graph.of_type(t)[0] for t in MAIN_LINE}
+    ctx = RunContext(question=question, requested_language=language)
+
+    steps = {
+        "input": lambda: input.run(ctx, nodes["input"], nodes["agent"]),
+        "guardrails": lambda: guardrails.run(ctx, nodes["guardrails"]),
+        "router": lambda: router.run(ctx, nodes["router"], graph, nodes["agent"]),
+        "agent": lambda: agent.run(ctx, nodes["agent"], graph),
+        "output": lambda: output.run(ctx, nodes["output"]),
+    }
+
+    for stage in MAIN_LINE:
+        node_id = nodes[stage].id
+        # Router and agent never see a blocked question; output still runs to show the reason.
+        if ctx.blocked and stage in ("router", "agent"):
+            yield {"type": "stage", "stage": stage, "node_id": node_id, "status": "skipped"}
+            continue
+
+        yield {"type": "stage", "stage": stage, "node_id": node_id, "status": "running"}
+        start = time.perf_counter()
+        try:
+            detail = steps[stage]()
+        except Exception as exc:  # report which stage broke instead of a bare 500
+            yield {"type": "error", "stage": stage, "node_id": node_id, "message": str(exc)}
+            return
+        ms = round((time.perf_counter() - start) * 1000)
+        status = "blocked" if stage == "guardrails" and ctx.blocked else "done"
+        yield {"type": "stage", "stage": stage, "node_id": node_id, "status": status, "ms": ms,
+               "detail": detail}
+
+    # The output stage's detail is the final answer package.
+    yield {"type": "result", **detail}
