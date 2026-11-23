@@ -32,7 +32,13 @@ docker compose exec ollama ollama pull bge-m3
 ```bash
 pip install -r tests/requirements.txt -r api/requirements.txt
 pytest tests                      # config checks; db tests skip without TEST_DATABASE_URL
-bash scripts/verify_phase1.sh     # checks the running Docker stack end to end
+bash scripts/verify_phase1.sh     # checks the running Docker stack end to end (Linux/macOS/Git Bash)
+```
+
+On Windows (PowerShell, Docker Desktop):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\verify_phase1.ps1
 ```
 
 ## Containers
