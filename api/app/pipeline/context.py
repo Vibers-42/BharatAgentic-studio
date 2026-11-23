@@ -19,3 +19,8 @@ class RunContext:
     sources: list[Node] = field(default_factory=list)  # agent: sources drawn into the agent
     tools: list[Node] = field(default_factory=list)    # agent: tools drawn into the agent
     answer: str = ""
+    citations: list[dict] = field(default_factory=list)  # agent: checked [n] -> file, page, chunk
+    supported: bool = False                 # agent: True only if the answer cites a real chunk
+    grounded: bool = False                  # agent: True if the answer came from retrieved chunks
+    model: str = ""
+    usage: dict = field(default_factory=dict)

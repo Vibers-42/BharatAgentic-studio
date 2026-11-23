@@ -28,10 +28,16 @@ class Settings:
 
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    gemini_base_url: str = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com")
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
     groq_model: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
     ollama_chat_model: str = os.getenv("OLLAMA_CHAT_MODEL", "qwen2.5:3b")
     ollama_embed_model: str = os.getenv("OLLAMA_EMBED_MODEL", "bge-m3")
+
+    # Retrieval: how many chunks reach the model, and the lowest cosine similarity that counts as relevant.
+    top_k: int = int(os.getenv("RAG_TOP_K", "5"))
+    min_similarity: float = float(os.getenv("RAG_MIN_SIMILARITY", "0.50"))
+    max_upload_mb: int = int(os.getenv("MAX_UPLOAD_MB", "20"))
 
     github_token: str = os.getenv("GITHUB_TOKEN", "")
     usd_to_inr: float = float(os.getenv("USD_TO_INR", "84"))

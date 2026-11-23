@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS chunks (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Phase 3: page number of the chunk inside a PDF, shown in citations.
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS page INT;
+
 CREATE INDEX IF NOT EXISTS chunks_source_idx ON chunks (source_id);
 CREATE INDEX IF NOT EXISTS chunks_embedding_idx ON chunks USING hnsw (embedding vector_cosine_ops);
 

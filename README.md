@@ -40,6 +40,7 @@ On Windows (PowerShell, Docker Desktop):
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase1.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase2.ps1
+powershell -ExecutionPolicy Bypass -File scripts\verify_phase3.ps1                  # add -UseFakeGemini without a key
 ```
 
 ## Pipeline graph and API
@@ -70,7 +71,29 @@ event: stage
 data: {"type": "stage", "stage": "router", "node_id": "n3", "status": "done", "ms": 0, "detail": {"route": "search", ...}}
 ```
 
-In Phase 2 the agent returns a labelled placeholder (`simulated: true`); no model is called yet.
+While the agent writes, `token` events stream the answer text:
+`{"type": "token", "stage": "agent", "node_id": "n4", "text": "..."}`.
+
+## Answers from your PDFs (Phase 3)
+
+1. Open http://localhost:3000, upload a PDF on the Chat tab (or `POST /sources/{source_id}/pdf`).
+   It is read page by page, split into ~500-character chunks, embedded with **bge-m3** in Ollama,
+   and stored in pgvector tagged with the source node id.
+2. Ask a question in English, Telugu or Hindi. The agent searches **only the sources drawn into it**:
+   a source without a line to the agent is never searched (the API refuses a graph with an
+   unconnected source).
+3. Chunks below a similarity of 0.50 are dropped. If nothing relevant is left, the agent says
+   "I don't know based on the connected sources" without calling the model.
+4. Gemini answers from the numbered chunks and must cite them like `[1]`. Citation numbers that
+   match no chunk are removed; an answer with no valid citation is replaced by "I don't know".
+5. The answer card shows each citation (file, page, chunk, similarity, snippet), the model and the
+   token counts.
+
+Sample PDFs (fictional, written for this project): [samples/](samples/) (`python samples/pdfgen.py`
+regenerates them). Scanned PDFs without a text layer are rejected; OCR is future work.
+
+Without a Gemini key, `verify_phase3.ps1 -UseFakeGemini` runs a local stand-in for the Gemini API
+([tests/fake_gemini.py](tests/fake_gemini.py)) to check citations and live streaming through nginx.
 
 ## Containers
 

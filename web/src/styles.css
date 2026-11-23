@@ -15,7 +15,7 @@ body {
 }
 
 .page {
-  max-width: 560px;
+  max-width: 760px;
   margin: 48px auto;
   padding: 0 16px;
 }
@@ -58,4 +58,157 @@ body {
 
 .dot.down {
   background: var(--down);
+}
+
+/* Phase 3: chat page */
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.tab {
+  margin-left: 6px;
+  padding: 6px 14px;
+  border: 1px solid #c9c9c4;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.tab.on {
+  background: var(--text);
+  color: #fff;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #e3e3de;
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin: 14px 0;
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  font-size: 1.05em;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.upload input {
+  margin-right: 10px;
+}
+
+.check {
+  margin-left: 16px;
+}
+
+.pipeline {
+  display: flex;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 14px 0;
+  flex-wrap: wrap;
+}
+
+.stage {
+  flex: 1;
+  min-width: 90px;
+  text-align: center;
+  padding: 8px 4px;
+  border-radius: 8px;
+  border: 1px solid #d6d6d0;
+  background: #fff;
+  color: var(--muted);
+  transition: background 0.2s, color 0.2s;
+}
+
+.stage.running {
+  background: #fff4cc;
+  border-color: #e0b800;
+  color: var(--text);
+}
+
+.stage.done {
+  background: #dff3e6;
+  border-color: var(--up);
+  color: var(--text);
+}
+
+.stage.blocked,
+.stage.error {
+  background: #fbe3e0;
+  border-color: var(--down);
+  color: var(--text);
+}
+
+.stage.skipped {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.ask {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ask input {
+  flex: 1;
+  min-width: 200px;
+  padding: 8px 10px;
+  font-size: 1em;
+}
+
+.ask select,
+.ask button {
+  padding: 8px 10px;
+}
+
+.answer p {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.streaming {
+  color: var(--muted);
+}
+
+.citations {
+  padding-left: 22px;
+}
+
+.citations blockquote {
+  margin: 4px 0 10px;
+  padding-left: 10px;
+  border-left: 3px solid #e3e3de;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.badge {
+  font-size: 0.85em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #efefea;
+}
+
+.badge.ok {
+  background: #dff3e6;
+}
+
+.badge.warn {
+  background: #fff4cc;
 }

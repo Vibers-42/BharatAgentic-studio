@@ -238,17 +238,23 @@ Test-Check 'normal question is allowed through guardrails' {
     $r = (Invoke-Run (Get-Graph 'full') '"Please summarise the refund policy"').Result
     if ($r.blocked -eq $false) { $true } else { "blocked: $($r.answer)" }
 }
+# Read the decision from the router's own stage event, so these checks do not depend on the model
+# (since Phase 3 a "direct" route calls Gemini, which fails without a key).
+function Get-Route($Graph, [string]$QuestionJson) {
+    $r = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" (ConvertTo-Body $Graph $QuestionJson)
+    @(@($r.Json.events) | Where-Object { $_.stage -eq 'router' -and $_.status -eq 'done' })[0].detail.route
+}
 Test-Check 'router: calculation with a tool connected -> tool' {
-    $r = (Invoke-Run (Get-Graph 'full') '"what is 1200 * 0.18"').Result
-    if ($r.route -eq 'tool') { $true } else { "route=$($r.route)" }
+    $route = Get-Route (Get-Graph 'full') '"what is 1200 * 0.18"'
+    if ($route -eq 'tool') { $true } else { "route=$route" }
 }
 Test-Check 'router: sources connected -> search' {
-    $r = (Invoke-Run (Get-Graph 'full') '"What is the refund policy?"').Result
-    if ($r.route -eq 'search') { $true } else { "route=$($r.route)" }
+    $route = Get-Route (Get-Graph 'full') '"What is the refund policy?"'
+    if ($route -eq 'search') { $true } else { "route=$route" }
 }
 Test-Check 'router: nothing connected -> direct' {
-    $r = (Invoke-Run (Get-Graph 'default') '"What is the refund policy?"').Result
-    if ($r.route -eq 'direct') { $true } else { "route=$($r.route)" }
+    $route = Get-Route (Get-Graph 'default') '"What is the refund policy?"'
+    if ($route -eq 'direct') { $true } else { "route=$route" }
 }
 Test-Check 'agent sees exactly the sources and tools drawn into it' {
     $g = Get-Graph 'full'
@@ -258,11 +264,13 @@ Test-Check 'agent sees exactly the sources and tools drawn into it' {
     if ((@($r.sources) -join ',') -eq 's1' -and (@($r.tools) -join ',') -eq 't1') { $true }
     else { "sources=$(@($r.sources) -join ','), tools=$(@($r.tools) -join ',')" }
 }
-Test-Check 'agent answer is labelled as a placeholder (no model in Phase 2)' {
-    $run = Invoke-Run (Get-Graph 'default') '"What is the refund policy?"'
+# Phase 2 checked a placeholder answer here. Phase 3 replaced it with real retrieval, so this now checks
+# the model-free path: connected sources with nothing stored must give "I don't know" without a model call.
+Test-Check 'agent with empty connected sources says it does not know, no model call' {
+    $run = Invoke-Run (Get-Graph 'full') '"What is the refund policy?"'
     $agentDone = @($run.Events | Where-Object { $_.stage -eq 'agent' -and $_.status -eq 'done' })[0]
-    if ($agentDone.detail.simulated -eq $true -and $run.Result.answer.StartsWith('[Placeholder, no model called]')) { $true }
-    else { $run.Result.answer }
+    if ($agentDone.detail.model_called -eq $false -and $run.Result.supported -eq $false -and @($run.Result.citations).Count -eq 0) { $true }
+    else { "model_called=$($agentDone.detail.model_called), answer=$($run.Result.answer)" }
 }
 
 # ---------- Saved graphs ----------

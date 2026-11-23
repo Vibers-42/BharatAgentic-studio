@@ -130,11 +130,12 @@ def test_language_falls_back_to_agent_setting(full_graph):
     assert run(full_graph, "What is the refund policy?")[-1]["language"] == "te"  # agent says te
 
 
-def test_placeholder_answer_is_labelled(default_graph):
+def test_direct_answer_is_marked_not_from_sources(default_graph):
+    # Phase 3 replaced the Phase 2 placeholder with a real model call (faked offline in tests).
     events = run(default_graph, "hello there, what is this?")
     agent_done = next(e for e in events if e.get("stage") == "agent" and e.get("status") == "done")
-    assert agent_done["detail"]["simulated"] is True
-    assert events[-1]["answer"].startswith("[Placeholder, no model called]")
+    assert agent_done["detail"]["mode"] == "direct"
+    assert events[-1]["grounded"] is False and events[-1]["citations"] == []
 
 
 def test_stage_crash_becomes_error_event(default_graph, monkeypatch):

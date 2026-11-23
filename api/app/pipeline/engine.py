@@ -5,10 +5,12 @@ Event shapes:
   {"type": "stage", "stage": "router", "node_id": "n3", "status": "running"}
   {"type": "stage", "stage": "router", "node_id": "n3", "status": "done", "ms": 1, "detail": {...}}
   status can also be "blocked" (guardrails stopped it) or "skipped" (a later stage after a block)
+  {"type": "token", "stage": "agent", "node_id": "n4", "text": "..."}  (while the model is writing)
   {"type": "error", "stage": "agent", "node_id": "n4", "message": "..."}
   {"type": "result", ...output stage fields...}
 """
 
+import inspect
 import time
 from collections.abc import Iterator
 
@@ -41,6 +43,9 @@ def run_pipeline(graph: Graph, question: str, language: str | None = None) -> It
         start = time.perf_counter()
         try:
             detail = steps[stage]()
+            if inspect.isgenerator(detail):
+                # A streaming stage (the agent) yields token events and returns its detail at the end.
+                detail = yield from detail
         except Exception as exc:  # report which stage broke instead of a bare 500
             yield {"type": "error", "stage": stage, "node_id": node_id, "message": str(exc)}
             return
