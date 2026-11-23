@@ -53,3 +53,17 @@ CREATE TABLE IF NOT EXISTS usage (
 );
 
 CREATE INDEX IF NOT EXISTS usage_created_idx ON usage (created_at);
+
+-- Phase 4: which model was asked for and which answered, fallbacks, failures, INR cost, local compute.
+-- cost_usd is NULL when the model has no published price (never a made-up zero).
+ALTER TABLE usage ALTER COLUMN cost_usd TYPE NUMERIC(16, 8);
+ALTER TABLE usage ALTER COLUMN cost_usd DROP NOT NULL;
+ALTER TABLE usage ADD COLUMN IF NOT EXISTS cost_inr NUMERIC(16, 6);
+ALTER TABLE usage ADD COLUMN IF NOT EXISTS model_requested TEXT;
+ALTER TABLE usage ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ok';      -- ok / error
+ALTER TABLE usage ADD COLUMN IF NOT EXISTS error_code TEXT;
+ALTER TABLE usage ADD COLUMN IF NOT EXISTS fallback_from TEXT;
+ALTER TABLE usage ADD COLUMN IF NOT EXISTS local_compute_ms INT NOT NULL DEFAULT 0;
+ALTER TABLE usage ADD COLUMN IF NOT EXISTS language TEXT;
+
+CREATE INDEX IF NOT EXISTS usage_user_idx ON usage (user_id);

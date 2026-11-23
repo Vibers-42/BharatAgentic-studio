@@ -31,6 +31,8 @@ def check(answer: str, chunks: list[Chunk]) -> dict:
         return "".join(f"[{n}]" for n in valid)
 
     cleaned = MARKER.sub(fix, answer).strip()
+    if not any(ch.isalnum() for ch in MARKER.sub("", cleaned)):
+        used = []  # only markers, no words: nothing is being claimed, so nothing is supported
     citations = [
         {"n": n, "source_id": c.source_id, "file": c.file_name, "page": c.page, "chunk": c.chunk_index,
          "similarity": round(c.similarity, 3), "snippet": c.content[:240]}

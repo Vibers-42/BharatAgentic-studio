@@ -41,6 +41,7 @@ On Windows (PowerShell, Docker Desktop):
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase1.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase2.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase3.ps1                  # add -UseFakeGemini without a key
+powershell -ExecutionPolicy Bypass -File scripts\verify_phase4.ps1                  # fallback and failure injection
 ```
 
 ## Pipeline graph and API
@@ -100,6 +101,29 @@ Gemini quota (HTTP 429): a per-minute limit is retried at most twice, waiting as
 `RetryInfo` / `Retry-After` says (or 2 s, then 4 s), and never longer than 20 s per wait. A daily quota
 is reported at once with no retry. The pipeline's error event then carries `code: "quota_rate"` or
 `"quota_daily"`, and the verification script reports such checks as BLOCKED, never PASS or FAIL.
+
+## Models, fallback and cost (Phase 4)
+
+Every model sits behind one `generate()` ([api/app/models/generate.py](api/app/models/generate.py));
+each provider is one small file: [gemini.py](api/app/models/gemini.py), [groq.py](api/app/models/groq.py),
+[ollama.py](api/app/models/ollama.py) (local `qwen2.5:3b`).
+
+- **Choose a model** per question in the chat dropdown (or `"model"` in `/pipeline/run`); the agent
+  node's `model` setting is the default. `GET /models` lists the models, whether each is ready, and prices.
+- **Retry and fallback:** a passing failure (per-minute limit, network, server error) is retried once,
+  waiting as the provider asks (at most 20 s); then the local model answers instead. A daily quota or
+  a missing key goes straight to the local model. If the local model fails too, the answer is one
+  `all_providers_failed` error listing every attempt. A safety refusal is never sent to another model.
+  The stream shows a `fallback` event, and `token_reset` if a model failed mid-answer.
+- **Tokens:** actual counts from each provider; if a provider sends none, they are estimated with the
+  tiktoken tokenizer and marked `"estimated": true`.
+- **Cost:** [prices.json](api/app/models/prices.json) (USD per million tokens, with the date it was
+  checked), shown in INR using `USD_TO_INR`. A model with no published price shows no cost rather than
+  zero. The local model has no API fee; its compute time is shown separately. Every answer also shows
+  what the same tokens would cost on the other models. Costs are estimates, not a bill.
+- **Usage:** one row per model answer (including fallbacks and failures) in Postgres. Pick the user in
+  the header. Endpoints: `GET /usage/totals`, `/usage/by-user`, `/usage/by-model`, `/usage/by-day`,
+  `/usage/recent` (add `?user=<name>`); `GET /users`, `POST /users`.
 
 ## Containers
 

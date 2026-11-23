@@ -16,8 +16,9 @@ def rag_system(language: str) -> str:
     return (
         "You answer questions using ONLY the numbered sources given to you.\n"
         "Rules:\n"
-        "1. Every sentence that states a fact must end with the number of the source it comes from, "
-        "like [1] or [2][3]. Use only numbers that appear in the sources.\n"
+        "1. Answer in full sentences that state the facts. End every sentence with the number of the "
+        "source it comes from, like [1] or [2][3]. Use only numbers that appear in the sources. "
+        "A source number alone is not an answer.\n"
         "2. If the sources do not contain the answer, reply with exactly this sentence and nothing else: "
         f"{DONT_KNOW[language]}\n"
         "3. Do not use outside knowledge and do not guess.\n"
@@ -32,7 +33,12 @@ def rag_prompt(question: str, chunks: list[Chunk]) -> str:
     for n, c in enumerate(chunks, start=1):
         where = f"{c.file_name}, page {c.page}, chunk {c.chunk_index}" if c.page else f"{c.file_name}, chunk {c.chunk_index}"
         blocks.append(f"[{n}] ({where})\n{c.content}")
-    return "Sources:\n\n" + "\n\n".join(blocks) + f"\n\nQuestion: {question}"
+    # The reminder after the question matters for small local models, which otherwise tend to reply
+    # with a bare source number or drop the exact figures.
+    return ("Sources:\n\n" + "\n\n".join(blocks) + f"\n\nQuestion: {question}\n\n"
+            "Answer the question in one or two full sentences. Copy numbers, amounts and time limits exactly "
+            "from the sources, and end each sentence with its source number, e.g. 'The fee is Rs. 300 [1].' "
+            "If the sources do not answer it, reply with the exact sentence from rule 2.")
 
 
 def direct_system(language: str) -> str:

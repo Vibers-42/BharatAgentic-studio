@@ -34,20 +34,27 @@ def full_graph() -> dict:
 def fake_stream(system: str, prompt: str):
     yield {"text": "Hello "}
     yield {"text": "there."}
-    yield {"usage": {"input_tokens": 10, "output_tokens": 2}, "finish_reason": "STOP"}
+    yield {"usage": {"input_tokens": 10, "output_tokens": 2}}
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "real_models: use the real retrieve() and gemini.stream()")
+    config.addinivalue_line("markers", "real_models: use the real retrieve() and provider stream() functions")
+    config.addinivalue_line("markers", "real_usage: resolve the user and log usage in the database")
 
 
 @pytest.fixture(autouse=True)
 def offline_models(monkeypatch, request):
-    """By default: no chunks are found and Gemini answers 'Hello there.'. Tests can override either."""
+    """By default: no chunks are found, every model answers 'Hello there.', retry waits are skipped,
+    and usage is not logged. Tests can override any of these."""
+    from app.models import gemini, generate, groq, ollama
+    from app.pipeline.stages import agent
+    from app.routes import pipeline
+
+    monkeypatch.setattr(generate, "sleep", lambda seconds: None)
+    if "real_usage" not in request.keywords:
+        monkeypatch.setattr(pipeline, "resolve_user", lambda name: None)
     if "real_models" in request.keywords:
         return
-    from app.models import gemini
-    from app.pipeline.stages import agent
-
     monkeypatch.setattr(agent, "retrieve", lambda question, source_ids: ([], []))
-    monkeypatch.setattr(gemini, "stream", fake_stream)
+    for provider in (gemini, groq, ollama):
+        monkeypatch.setattr(provider, "stream", fake_stream)

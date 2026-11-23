@@ -212,3 +212,21 @@ body {
 .badge.warn {
   background: #fff4cc;
 }
+
+/* Phase 4: models, cost and fallback notices */
+.top nav select {
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.notice {
+  background: #fff4cc;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.9em;
+}
+
+.small {
+  font-size: 0.85em;
+  margin: 6px 0 0;
+}

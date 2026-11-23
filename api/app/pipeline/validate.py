@@ -1,7 +1,7 @@
 """Checks a graph against the pipeline rules and returns every problem at once, each with a clear
 message, so the user can fix the canvas in one go. An empty list means the graph can run."""
 
-from .graph import LANGUAGES, MAIN_LINE, NODE_TYPES, SOURCE_TYPES, TOOL_TYPES, Graph
+from .graph import LANGUAGES, MAIN_LINE, MODELS, NODE_TYPES, SOURCE_TYPES, TOOL_TYPES, Graph
 
 
 def _error(code: str, message: str, node_id: str | None = None) -> dict:
@@ -86,5 +86,10 @@ def validate_graph(graph: Graph) -> list[dict]:
     if lang is not None and lang not in LANGUAGES:
         errors.append(_error("bad_language", f"Agent language '{lang}' is not supported. "
                              f"Use one of: {', '.join(sorted(LANGUAGES))}.", agent_id))
+
+    model = main["agent"][0].config.get("model")
+    if model is not None and model not in MODELS:
+        errors.append(_error("bad_model", f"Agent model '{model}' is not available. "
+                             f"Use one of: {', '.join(MODELS)}.", agent_id))
 
     return errors

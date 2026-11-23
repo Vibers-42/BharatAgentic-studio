@@ -14,3 +14,17 @@ starting the next.
 | 7 | **Tools and ship**: calculator tool, one read-only MCP tool in `mcp-runner`, tool calls shown on canvas and answer, README, demo script, fresh-clone test | `docker compose up` works on a clean machine; 2-minute demo runs end to end |
 
 Never cut: cited answers, the model dropdown, cost on every answer, the Telugu and Hindi test.
+
+## Carried-forward requirements (final delivery)
+
+| Requirement | Where | Status |
+|---|---|---|
+| Document chunks are isolated between saved graphs, even when two graphs use the same source id | Phase 5 (source connectors rework): chunks keyed by graph scope + source id | Not started. Today chunks are keyed by source id only. |
+| Citations must support the actual claims, not just exist | Phase 5 (with the Telugu/Hindi eval): check each cited sentence against its chunk | Partly done in Phase 4: an answer made only of citation markers is never "supported". Claim-level checking not started. |
+| Canvas node highlighting is driven by the real `/pipeline/run` SSE events | Phase 6 | Event contract is stable: every stage event carries `node_id` and `status`. |
+
+## Known issues to revisit
+
+- `gemini-2.5-flash` is marked deprecated on Google's pricing page; from 2026-12-01 requests route to
+  `gemini-3.5-flash-lite` (same listed price). Switch `GEMINI_MODEL` before the demo if needed.
+- Groq publishes no price for `llama-3.3-70b-versatile` ("Contact Sales"), so Groq answers show no cost.

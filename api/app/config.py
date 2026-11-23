@@ -31,6 +31,7 @@ class Settings:
     gemini_base_url: str = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com")
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
     groq_model: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    groq_base_url: str = os.getenv("GROQ_BASE_URL", "https://api.groq.com")
     ollama_chat_model: str = os.getenv("OLLAMA_CHAT_MODEL", "qwen2.5:3b")
     ollama_embed_model: str = os.getenv("OLLAMA_EMBED_MODEL", "bge-m3")
 

@@ -9,6 +9,7 @@ SOURCE_TYPES = {"source_repo", "source_doc"}
 TOOL_TYPES = {"tool_calculator", "tool_mcp"}
 NODE_TYPES = set(MAIN_LINE) | SOURCE_TYPES | TOOL_TYPES
 LANGUAGES = {"en", "te", "hi"}
+MODELS = ["gemini", "groq", "local"]  # keys of models/generate.py PROVIDERS
 
 
 class Node(BaseModel):

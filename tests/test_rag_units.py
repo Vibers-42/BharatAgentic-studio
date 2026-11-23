@@ -93,3 +93,9 @@ def test_dont_know_detected_in_every_language(lang):
 
 def test_normal_answer_is_not_dont_know():
     assert not citations.is_dont_know("The consultation fee is Rs. 300 [1].")
+
+
+def test_answer_of_only_markers_has_no_citations():
+    # A small model once replied just "[2]": that states nothing, so it must not count as supported.
+    assert citations.check("[2]", make_chunks(3))["citations"] == []
+    assert citations.check(" [1][2]. ", make_chunks(3))["citations"] == []

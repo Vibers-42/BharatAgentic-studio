@@ -10,12 +10,12 @@ export const STAGES = [
   ["n5", "output", "Output"],
 ];
 
-export function buildGraph({ fileName, connected, language }) {
+export function buildGraph({ fileName, connected, language, model }) {
   const nodes = [
     { id: "n1", type: "input", config: {} },
     { id: "n2", type: "guardrails", config: { block: ["empty", "abuse", "off_topic"] } },
     { id: "n3", type: "router", config: {} },
-    { id: "n4", type: "agent", config: { model: "gemini", language: language || "en" } },
+    { id: "n4", type: "agent", config: { model: model || "gemini", language: language || "en" } },
     { id: "n5", type: "output", config: {} },
   ];
   const edges = [

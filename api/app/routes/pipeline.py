@@ -1,5 +1,6 @@
 """Pipeline endpoints: get the default graph, validate a graph, and run a question through it.
-/pipeline/run streams Server-Sent Events (one per stage change); add ?stream=false for plain JSON."""
+/pipeline/run streams Server-Sent Events (one per stage change); add ?stream=false for plain JSON.
+The request may pick the model and names the user whose usage is logged."""
 
 import json
 from pathlib import Path
@@ -9,9 +10,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..pipeline.engine import run_pipeline
-from ..pipeline.graph import Graph
+from ..pipeline.graph import MODELS, Graph
 from ..pipeline.validate import validate_graph
 from .graphs import load_graph
+from .users import user_id
 
 router = APIRouter(prefix="/pipeline")
 
@@ -23,6 +25,13 @@ class RunRequest(BaseModel):
     language: str | None = None   # "en", "te" or "hi"; None lets the input stage decide
     graph: Graph | None = None    # send the graph inline ...
     graph_id: int | None = None   # ... or the id of a saved graph
+    model: str | None = None      # "gemini", "groq" or "local"; None uses the agent node's setting
+    user: str = "demo"            # whose usage this is (the user switcher)
+
+
+def resolve_user(name: str) -> int:
+    """The user's id for usage logging; a module-level function so tests without a database can skip it."""
+    return user_id(name)
 
 
 @router.get("/default")
@@ -51,7 +60,11 @@ def run(req: RunRequest, stream: bool = True):
     if errors:
         raise HTTPException(422, {"message": "The pipeline graph is not valid.", "errors": errors})
 
-    events = run_pipeline(graph, req.question, req.language)
+    if req.model is not None and req.model not in MODELS:
+        raise HTTPException(400, f"Unknown model '{req.model}'. Choose one of: {', '.join(MODELS)}.")
+    uid = resolve_user(req.user)  # 400 for an unknown user, before anything runs
+
+    events = run_pipeline(graph, req.question, req.language, req.model, uid)
     if not stream:
         return {"events": list(events)}
     return StreamingResponse(

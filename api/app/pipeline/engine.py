@@ -8,7 +8,10 @@ Event shapes:
   {"type": "token", "stage": "agent", "node_id": "n4", "text": "...", "ms": 412}  (while the model is writing;
   ms = when the api received this piece from the model)
   {"type": "error", "stage": "agent", "node_id": "n4", "message": "...", "code": "quota_rate", "retry_after": 30}
-  code is "quota_daily" / "quota_rate" (Gemini HTTP 429), "model_error", or "stage_error"
+  code is "all_providers_failed" (with "attempts"), "quota_daily" / "quota_rate", "safety", "model_error",
+  or "stage_error"
+  {"type": "fallback", "stage": "agent", "from": "gemini", "to": "local", "code": "...", "reason": "..."}
+  {"type": "token_reset", "stage": "agent", ...}  (a model failed mid-answer: discard the streamed text)
   {"type": "result", ...output stage fields...}
 """
 
@@ -21,10 +24,11 @@ from .graph import MAIN_LINE, Graph
 from .stages import agent, guardrails, input, output, router
 
 
-def run_pipeline(graph: Graph, question: str, language: str | None = None) -> Iterator[dict]:
-    """The graph must already have passed validate_graph()."""
+def run_pipeline(graph: Graph, question: str, language: str | None = None, model: str | None = None,
+                 user_id: int | None = None) -> Iterator[dict]:
+    """The graph must already have passed validate_graph(). user_id None means usage is not logged."""
     nodes = {t: graph.of_type(t)[0] for t in MAIN_LINE}
-    ctx = RunContext(question=question, requested_language=language)
+    ctx = RunContext(question=question, requested_language=language, requested_model=model, user_id=user_id)
 
     steps = {
         "input": lambda: input.run(ctx, nodes["input"], nodes["agent"]),
@@ -53,6 +57,8 @@ def run_pipeline(graph: Graph, question: str, language: str | None = None) -> It
                      "code": getattr(exc, "code", "stage_error")}  # e.g. quota_daily, quota_rate
             if getattr(exc, "retry_after", None) is not None:
                 error["retry_after"] = exc.retry_after
+            if getattr(exc, "attempts", None):
+                error["attempts"] = exc.attempts  # every model tried, and why each failed
             yield error
             return
         ms = round((time.perf_counter() - start) * 1000)

@@ -81,6 +81,12 @@ function Test-Check([string]$Name, [scriptblock]$Test, [switch]$Model, [switch]$
 function Assert-NoQuota($Events) {
     $last = @($Events)[-1]
     if ($last.type -eq 'error' -and "$($last.code)".StartsWith('quota_')) { throw [QuotaBlocked]::new($last.code, $last.message) }
+    # Since Phase 4 a Gemini 429 falls back to the local model; that answer says nothing about Gemini.
+    $quotaAttempt = @($last.attempts | Where-Object { "$($_.code)".StartsWith('quota_') })[0]
+    if ($last.type -eq 'error' -and $quotaAttempt) { throw [QuotaBlocked]::new($quotaAttempt.code, $quotaAttempt.message) }
+    if ($last.type -eq 'result' -and $last.fallback -and "$($last.fallback.code)".StartsWith('quota_')) {
+        throw [QuotaBlocked]::new($last.fallback.code, "Gemini refused ($($last.fallback.reason)); the local model answered instead")
+    }
     $Events
 }
 
