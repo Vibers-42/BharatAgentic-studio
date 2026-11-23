@@ -146,4 +146,5 @@ def test_stage_crash_becomes_error_event(default_graph, monkeypatch):
 
     monkeypatch.setattr(router, "run", boom)
     events = run(default_graph, "What is the refund policy?")
-    assert events[-1] == {"type": "error", "stage": "router", "node_id": "n3", "message": "router exploded"}
+    assert events[-1] == {"type": "error", "stage": "router", "node_id": "n3", "message": "router exploded",
+                          "code": "stage_error"}

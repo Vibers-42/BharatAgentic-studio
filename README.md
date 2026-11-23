@@ -94,6 +94,12 @@ regenerates them). Scanned PDFs without a text layer are rejected; OCR is future
 
 Without a Gemini key, `verify_phase3.ps1 -UseFakeGemini` runs a local stand-in for the Gemini API
 ([tests/fake_gemini.py](tests/fake_gemini.py)) to check citations and live streaming through nginx.
+With a key, the script sends 5 Gemini requests and reuses each answer for several checks.
+
+Gemini quota (HTTP 429): a per-minute limit is retried at most twice, waiting as long as Gemini's
+`RetryInfo` / `Retry-After` says (or 2 s, then 4 s), and never longer than 20 s per wait. A daily quota
+is reported at once with no retry. The pipeline's error event then carries `code: "quota_rate"` or
+`"quota_daily"`, and the verification script reports such checks as BLOCKED, never PASS or FAIL.
 
 ## Containers
 

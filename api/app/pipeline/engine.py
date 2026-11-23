@@ -5,8 +5,10 @@ Event shapes:
   {"type": "stage", "stage": "router", "node_id": "n3", "status": "running"}
   {"type": "stage", "stage": "router", "node_id": "n3", "status": "done", "ms": 1, "detail": {...}}
   status can also be "blocked" (guardrails stopped it) or "skipped" (a later stage after a block)
-  {"type": "token", "stage": "agent", "node_id": "n4", "text": "..."}  (while the model is writing)
-  {"type": "error", "stage": "agent", "node_id": "n4", "message": "..."}
+  {"type": "token", "stage": "agent", "node_id": "n4", "text": "...", "ms": 412}  (while the model is writing;
+  ms = when the api received this piece from the model)
+  {"type": "error", "stage": "agent", "node_id": "n4", "message": "...", "code": "quota_rate", "retry_after": 30}
+  code is "quota_daily" / "quota_rate" (Gemini HTTP 429), "model_error", or "stage_error"
   {"type": "result", ...output stage fields...}
 """
 
@@ -47,7 +49,11 @@ def run_pipeline(graph: Graph, question: str, language: str | None = None) -> It
                 # A streaming stage (the agent) yields token events and returns its detail at the end.
                 detail = yield from detail
         except Exception as exc:  # report which stage broke instead of a bare 500
-            yield {"type": "error", "stage": stage, "node_id": node_id, "message": str(exc)}
+            error = {"type": "error", "stage": stage, "node_id": node_id, "message": str(exc),
+                     "code": getattr(exc, "code", "stage_error")}  # e.g. quota_daily, quota_rate
+            if getattr(exc, "retry_after", None) is not None:
+                error["retry_after"] = exc.retry_after
+            yield error
             return
         ms = round((time.perf_counter() - start) * 1000)
         status = "blocked" if stage == "guardrails" and ctx.blocked else "done"

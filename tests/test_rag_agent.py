@@ -2,6 +2,7 @@
 "I don't know" when nothing supports an answer, and the real Gemini client against a fake server."""
 
 import dataclasses
+import json
 
 import pytest
 
@@ -69,6 +70,8 @@ def test_tokens_stream_between_agent_running_and_done(monkeypatch, spy_retrieve,
     end = kinds.index(("stage", "agent", "done"))
     tokens = [e for e in events[start:end] if e["type"] == "token"]
     assert len(tokens) >= 4 and all(t["node_id"] == "n4" for t in tokens)
+    assert all(isinstance(t["ms"], int) for t in tokens)
+    assert [t["ms"] for t in tokens] == sorted(t["ms"] for t in tokens)
 
 
 def test_only_connected_sources_are_searched(monkeypatch, spy_retrieve, full_graph):
@@ -160,11 +163,76 @@ def test_gemini_client_streams_pieces_and_usage(fake_server):
     assert pieces[-1]["usage"]["output_tokens"] > 0
 
 
+@pytest.fixture
+def no_sleep(monkeypatch):
+    """Record the retry waits instead of sleeping through them."""
+    waits = []
+    monkeypatch.setattr(gemini, "sleep", waits.append)
+    return waits
+
+
 @pytest.mark.real_models
-def test_gemini_client_reports_quota(fake_server, monkeypatch):
+def test_bare_429_backs_off_then_gives_up(fake_server, monkeypatch, no_sleep):
     use_settings(monkeypatch, gemini_api_key="quota-exceeded")
-    with pytest.raises(gemini.GeminiError, match="429"):
+    with pytest.raises(gemini.GeminiQuotaError) as err:
         list(gemini.stream("s", "p"))
+    assert err.value.code == "quota_rate" and err.value.attempts == gemini.MAX_RETRIES + 1
+    assert no_sleep == [2.0, 4.0]  # exponential backoff, no Retry-After hint given
+    assert fake_gemini.REQUESTS["quota-exceeded"] == 3
+
+
+@pytest.mark.real_models
+def test_daily_quota_is_not_retried(fake_server, monkeypatch, no_sleep):
+    use_settings(monkeypatch, gemini_api_key="quota-daily")
+    with pytest.raises(gemini.GeminiQuotaError) as err:
+        list(gemini.stream("s", "p"))
+    assert err.value.code == "quota_daily"
+    assert no_sleep == [] and fake_gemini.REQUESTS["quota-daily"] == 1
+    assert "daily quota" in str(err.value) and "no retry" in str(err.value)
+
+
+@pytest.mark.real_models
+def test_rate_limit_retries_with_retry_info_then_answers(fake_server, monkeypatch, no_sleep):
+    use_settings(monkeypatch, gemini_api_key="quota-rate-2")
+    pieces = list(gemini.stream("s", "Sources:\n\n[1] (a.pdf, chunk 0)\nThe fee is Rs. 300.\n\nQuestion: fee?"))
+    assert any("text" in p for p in pieces)
+    assert no_sleep == [0.05, 0.05]  # waited as long as RetryInfo said, twice
+    assert fake_gemini.REQUESTS["quota-rate-2"] == 3
+
+
+@pytest.mark.real_models
+def test_rate_limit_retry_count_is_strict(fake_server, monkeypatch, no_sleep):
+    use_settings(monkeypatch, gemini_api_key="quota-rate-forever")
+    with pytest.raises(gemini.GeminiQuotaError) as err:
+        list(gemini.stream("s", "p"))
+    assert err.value.code == "quota_rate"
+    assert fake_gemini.REQUESTS["quota-rate-forever"] == gemini.MAX_RETRIES + 1
+
+
+@pytest.mark.real_models
+def test_long_retry_delay_is_reported_not_waited():
+    import httpx
+    body = json.dumps(fake_gemini._google_429("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", "45s"))
+    assert gemini.classify_429(httpx.Headers(), body) == (
+        "rate", 45.0, "GenerateRequestsPerMinutePerProjectPerModel-FreeTier")
+    assert gemini.classify_429(httpx.Headers({"retry-after": "7"}), "{}") == ("rate", 7.0, "unknown")
+
+
+@pytest.mark.real_models
+def test_quota_error_never_contains_the_key(fake_server, monkeypatch, no_sleep):
+    use_settings(monkeypatch, gemini_api_key="quota-daily")
+    with pytest.raises(gemini.GeminiQuotaError) as err:
+        list(gemini.stream("s", "p"))
+    assert "quota-daily" not in str(err.value)
+
+
+def test_quota_error_event_has_code(monkeypatch, default_graph):
+    def limited(system, prompt):
+        raise gemini.GeminiQuotaError("daily", "Gemini daily quota is used up", retry_after=30)
+        yield  # pragma: no cover
+    monkeypatch.setattr(gemini, "stream", limited)
+    error = run(default_graph, "hello there")[-1]
+    assert error["type"] == "error" and error["code"] == "quota_daily" and error["retry_after"] == 30
 
 
 @pytest.mark.real_models
@@ -181,3 +249,12 @@ def test_gemini_request_body_has_system_and_no_thinking():
     assert body["contents"][0]["parts"][0]["text"] == "question"
     if "2.5-flash" in settings.gemini_model:
         assert body["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
+
+
+@pytest.mark.real_models
+def test_unreachable_gemini_is_a_model_error_not_quota(monkeypatch):
+    use_settings(monkeypatch, gemini_api_key="k", gemini_base_url="http://127.0.0.1:9")  # nothing listens on port 9
+    with pytest.raises(gemini.GeminiError) as err:
+        list(gemini.stream("s", "p"))
+    assert not isinstance(err.value, gemini.GeminiQuotaError)
+    assert err.value.code == "model_error" and "Cannot reach Gemini" in str(err.value)

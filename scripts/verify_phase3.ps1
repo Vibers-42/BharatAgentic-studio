@@ -1,19 +1,26 @@
 <#
-Checks Phase 3 (PDF RAG) on the running Docker stack and prints PASS / FAIL / SKIP per check.
+Checks Phase 3 (PDF RAG) on the running Docker stack and prints PASS / FAIL / SKIP / BLOCKED per check.
 Works in Windows PowerShell 5.1 and PowerShell 7. Run verify_phase1.ps1 and verify_phase2.ps1 too.
 
   powershell -ExecutionPolicy Bypass -File scripts\verify_phase3.ps1
       Uses the api as it is. Checks that need Gemini run only if GEMINI_API_KEY is set in .env.
+      Makes 5 real Gemini requests in total; each answer is reused by several checks.
   powershell -ExecutionPolicy Bypass -File scripts\verify_phase3.ps1 -UseFakeGemini
       Starts tests\fake_gemini.py on this PC (needs Python), points the api at it for the run, then
-      restores the normal api. Proves citations and streaming without a key or quota. Checks that
-      need real Gemini wording (answer content, Telugu/Hindi text) are SKIP in this mode.
+      restores the normal api. Proves citations and streaming timing without a key or quota. Checks
+      that need real Gemini wording (answer content, Telugu/Hindi text) are SKIP in this mode.
+  Add -Cleanup to delete the test sources at the end (by default they are kept and simply
+  re-ingested next time; ingestion uses the local bge-m3 model only, never Gemini).
+
+Results: PASS verified. FAIL checked and wrong. SKIP could not be judged (no key, fake mode, or an
+answer too short to time). BLOCKED the Gemini quota refused the request (HTTP 429), so nothing about
+the feature is known. After a daily-quota block, the remaining Gemini checks are BLOCKED without
+sending more requests. Exit code is 0 only if every check passes.
 
 Test data: samples\refund-policy.pdf and samples\hostel-rules.pdf (fictional, made for this project),
-stored under source ids p3_refund and p3_hostel, removed again at the end.
-Exit code is 0 only if every check passes.
+stored under source ids p3_refund and p3_hostel.
 #>
-param([switch]$UseFakeGemini)
+param([switch]$UseFakeGemini, [switch]$Cleanup)
 
 $ErrorActionPreference = 'Continue'
 Set-Location (Split-Path -Parent $PSScriptRoot)
@@ -22,33 +29,59 @@ Add-Type -AssemblyName System.Net.Http
 $script:Pass = 0
 $script:Fail = 0
 $script:Skip = 0
+$script:Blocked = 0
+$script:DailyQuota = $false
+$script:GeminiRequests = 0
 $Api = 'http://127.0.0.1:8000'
 $Web = 'http://127.0.0.1:3000/api'
 $FakePort = 8765
 
 function Write-Result([string]$Result, [string]$Name, [string]$Detail = '') {
-    $colors = @{ PASS = 'Green'; FAIL = 'Red'; SKIP = 'Yellow' }
-    $line = '{0,-5} {1}' -f $Result, $Name
+    $colors = @{ PASS = 'Green'; FAIL = 'Red'; SKIP = 'Yellow'; BLOCKED = 'Magenta' }
+    $line = '{0,-7} {1}' -f $Result, $Name
     if ($Detail) { $line += "  ($Detail)" }
     Write-Host $line -ForegroundColor $colors[$Result]
-    switch ($Result) { 'PASS' { $script:Pass++ } 'FAIL' { $script:Fail++ } 'SKIP' { $script:Skip++ } }
+    switch ($Result) {
+        'PASS' { $script:Pass++ } 'FAIL' { $script:Fail++ } 'SKIP' { $script:Skip++ } 'BLOCKED' { $script:Blocked++ }
+    }
+}
+
+# Thrown when the pipeline reports a Gemini 429, so the check is BLOCKED rather than FAIL.
+class QuotaBlocked : System.Exception {
+    [string]$Code
+    QuotaBlocked([string]$code, [string]$message) : base($message) { $this.Code = $code }
 }
 
 # -Model: needs a model (real or fake). -RealModel: needs real Gemini wording. Otherwise model-free.
+# $Test returns $true (PASS), 'SKIP:<reason>' (SKIP), or any other text (FAIL).
 function Test-Check([string]$Name, [scriptblock]$Test, [switch]$Model, [switch]$RealModel) {
     if (-not $script:ApiUp) { Write-Result 'SKIP' $Name 'api is not reachable'; return }
     if (($Model -or $RealModel) -and $script:Mode -eq 'none') {
         Write-Result 'SKIP' $Name 'GEMINI_API_KEY not set (or run with -UseFakeGemini)'; return
     }
     if ($RealModel -and $script:Mode -eq 'fake') { Write-Result 'SKIP' $Name 'needs real Gemini'; return }
+    if (($Model -or $RealModel) -and $script:DailyQuota) {
+        Write-Result 'BLOCKED' $Name 'Gemini daily quota is used up; no request sent'; return
+    }
     try {
         $result = & $Test
         if ($result -is [bool] -and $result) { Write-Result 'PASS' $Name }
+        elseif ("$result".StartsWith('SKIP:')) { Write-Result 'SKIP' $Name "$result".Substring(5) }
         elseif ($result) { Write-Result 'FAIL' $Name "$result" }
         else { Write-Result 'FAIL' $Name }
+    } catch [QuotaBlocked] {
+        if ($_.Exception.Code -eq 'quota_daily') { $script:DailyQuota = $true }
+        Write-Result 'BLOCKED' $Name "$($_.Exception.Code): $($_.Exception.Message)"
     } catch {
         Write-Result 'FAIL' $Name $_.Exception.Message
     }
+}
+
+# Raises QuotaBlocked if the events end in a Gemini 429 error; returns the events otherwise.
+function Assert-NoQuota($Events) {
+    $last = @($Events)[-1]
+    if ($last.type -eq 'error' -and "$($last.code)".StartsWith('quota_')) { throw [QuotaBlocked]::new($last.code, $last.message) }
+    $Events
 }
 
 $script:Http = New-Object System.Net.Http.HttpClient
@@ -96,7 +129,7 @@ function Invoke-Stream([string]$Url, [string]$Body) {
         }
     }
     $reader.Dispose()
-    , $events
+    , (Assert-NoQuota $events)
 }
 
 # A JSON string literal built from code points, so this file stays ASCII (PowerShell 5.1 safe).
@@ -130,11 +163,58 @@ function New-RunBody($Graph, [string]$QuestionJson, [string]$Language) {
 function Invoke-Run($Graph, [string]$QuestionJson, [string]$Language) {
     $r = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" (New-RunBody $Graph $QuestionJson $Language)
     if ($r.Status -ne 200) { throw "HTTP $($r.Status): $($r.Text)" }
-    $events = @($r.Json.events)
+    $events = @(Assert-NoQuota @($r.Json.events))
     $last = $events[-1]
     if ($last.type -eq 'error') { throw "pipeline error in $($last.stage): $($last.message)" }
     $agent = @($events | Where-Object { $_.stage -eq 'agent' -and $_.status -eq 'done' })[0]
     [pscustomobject]@{ Result = $last; Agent = $agent.detail; Events = $events }
+}
+
+# Runs one Gemini-backed request the first time it is asked for, then hands the same answer to every
+# check that needs it, so each question costs Gemini at most one request per script run.
+$script:Answers = @{}
+function Get-Answer([string]$Name, [scriptblock]$Request) {
+    if (-not $script:Answers.ContainsKey($Name)) {
+        try {
+            $script:GeminiRequests++
+            $script:Answers[$Name] = @{ Value = (& $Request) }
+        } catch {
+            $script:Answers[$Name] = @{ Error = $_.Exception }
+        }
+    }
+    $entry = $script:Answers[$Name]
+    if ($entry.ContainsKey('Error')) { throw $entry.Error }
+    $entry.Value
+}
+
+# Turns a list of stream events into the same shape Invoke-Run returns, plus the events themselves.
+function ConvertFrom-StreamEvents($Events) {
+    $last = @($Events)[-1]
+    if ($last.type -eq 'error') { throw "pipeline error in $($last.stage): $($last.message)" }
+    $agent = @($Events | Where-Object { $_.stage -eq 'agent' -and $_.status -eq 'done' })[0]
+    [pscustomobject]@{ Result = $last; Agent = $agent.detail; Events = $Events }
+}
+
+# Streaming is judged by comparing two clocks for the same token events:
+#   ms          when the api received the piece from the model (set by the api)
+#   arrived_ms  when this script received the event (set here)
+# If events are forwarded as they come, the two spreads match. If something buffers, the events arrive
+# together although the model sent them over time. An answer the model produced within 100 ms cannot
+# show the difference, so that case is SKIP, never PASS.
+function Test-Streaming($Events) {
+    $tokens = @($Events | Where-Object { $_.type -eq 'token' })
+    $result = @($Events | Where-Object { $_.type -eq 'result' })[0]
+    $agentRun = @($Events | Where-Object { $_.stage -eq 'agent' -and $_.status -eq 'running' })[0]
+    if ($null -eq $result) { return 'no result event' }
+    if ($tokens.Count -eq 0) { return 'no token events (the model was not called?)' }
+    if ($agentRun.arrived_ms -gt $tokens[0].arrived_ms) { return 'agent running arrived after the first token' }
+    $modelSpread = $tokens[-1].ms - $tokens[0].ms
+    $clientSpread = $tokens[-1].arrived_ms - $tokens[0].arrived_ms
+    $detail = "$($tokens.Count) pieces; model sent them over $modelSpread ms, this script received them over $clientSpread ms"
+    if ($tokens.Count -lt 2 -or $modelSpread -lt 100) { return "SKIP:$detail; too fast to tell streaming from buffering" }
+    if ($clientSpread -lt 0.5 * $modelSpread) { return "buffered: $detail" }
+    Write-Host "        $detail" -ForegroundColor DarkGray
+    $true
 }
 
 function Wait-ApiHealthy {
@@ -264,63 +344,66 @@ try {
         if ($r.Status -eq 422 -and $codes -contains 'not_connected') { $true } else { "HTTP $($r.Status)" }
     }
 
-    # ---------- Answers from the model ----------
+    # ---------- Answers from the model: 5 Gemini requests in total, each reused by several checks ----------
+    # Two long English answers are streamed (summary through nginx :3000, hostel through api :8000)
+    # so their timing can be judged; telugu, hindi and direct are plain JSON runs.
+    $QSummary = '"Summarise the refund rules for consultation fees, lab tests and medicines, and explain how refunds are paid."'
+    $summary = { Get-Answer 'summary' { ConvertFrom-StreamEvents (Invoke-Stream "$Web/pipeline/run" (New-RunBody (New-Graph @('p3_refund')) $QSummary 'en')) } }
+    $QHostelSummary = '"Summarise all the hostel rules: gate timings, the late register, the mess fee and breakfast, and visitors."'
+    $hostel = { Get-Answer 'hostel' { ConvertFrom-StreamEvents (Invoke-Stream "$Api/pipeline/run" (New-RunBody (New-Graph @('p3_hostel')) $QHostelSummary 'en')) } }
+    $telugu = { Get-Answer 'telugu' { Invoke-Run (New-Graph @('p3_refund') 'en') $QTelugu } }
+    $hindi = { Get-Answer 'hindi' { Invoke-Run (New-Graph @('p3_refund') 'en') $QHindi } }
+    $direct = { Get-Answer 'direct' { Invoke-Run (New-Graph @()) '"Namaste!"' 'en' } }
+
     Write-Host "`n== Cited answers"
     Test-Check 'cited answer from the refund PDF (file, page, chunk exist)' {
-        $run = Invoke-Run (New-Graph @('p3_refund')) $QLab 'en'
+        $run = & $summary
         $c = @($run.Result.citations)
         if ($run.Result.supported -ne $true -or $c.Count -eq 0) { return "supported=$($run.Result.supported): $($run.Result.answer)" }
         $bad = @($c | Where-Object { $_.file -ne 'refund-policy.pdf' -or $_.page -lt 1 -or $_.page -gt 2 -or $_.chunk -ge $script:RefundChunks })
         if ($bad.Count -eq 0 -and $run.Result.answer -match '\[\d+\]') { $true } else { "bad citations: $($bad | ConvertTo-Json -Compress)" }
     } -Model
-    Test-Check 'cited answer states the right fact (80 percent)' {
-        $run = Invoke-Run (New-Graph @('p3_refund')) $QLab 'en'
+    Test-Check 'cited answer states the right fact (80 percent for lab tests)' {
+        $run = & $summary
         if ($run.Result.answer -match '80') { $true } else { $run.Result.answer }
     } -RealModel
     Test-Check 'answer shows the model and real token counts' {
-        $run = Invoke-Run (New-Graph @('p3_refund')) $QLab 'en'
+        $run = & $summary
         if ($run.Result.model -like 'gemini:*' -and $run.Result.usage.input_tokens -gt 0 -and $run.Result.usage.output_tokens -gt 0) { $true }
         else { "model=$($run.Result.model), usage=$($run.Result.usage | ConvertTo-Json -Compress)" }
     } -Model
     Test-Check 'no sources connected: direct reply, marked not from sources, no citations' {
-        $run = Invoke-Run (New-Graph @()) '"Namaste!"' 'en'
+        $run = & $direct
         if ($run.Result.grounded -eq $false -and @($run.Result.citations).Count -eq 0 -and $run.Agent.mode -eq 'direct') { $true }
         else { "grounded=$($run.Result.grounded), mode=$($run.Agent.mode)" }
     } -Model
     Test-Check 'Telugu question finds the English PDF and is cited' {
-        $run = Invoke-Run (New-Graph @('p3_refund') 'en') $QTelugu
+        $run = & $telugu
         $files = @($run.Result.citations | ForEach-Object { $_.file })
         if ($run.Result.language -eq 'te' -and $run.Result.supported -eq $true -and $files -contains 'refund-policy.pdf') { $true }
-        else { "language=$($run.Result.language), supported=$($run.Result.supported)" }
+        else { "language=$($run.Result.language), supported=$($run.Result.supported): $($run.Result.answer)" }
     } -Model
     Test-Check 'Telugu answer is written in Telugu' {
-        $run = Invoke-Run (New-Graph @('p3_refund') 'en') $QTelugu
+        $run = & $telugu
         if ($run.Result.answer -match $TeluguLetters -and $run.Result.supported -eq $true) { $true } else { $run.Result.answer }
     } -RealModel
     Test-Check 'Hindi question is answered in Hindi with a citation (5 working days)' {
-        $run = Invoke-Run (New-Graph @('p3_refund') 'en') $QHindi
+        $run = & $hindi
         if ($run.Result.language -eq 'hi' -and $run.Result.answer -match $HindiLetters -and $run.Result.answer -match '5' -and
             @($run.Result.citations).Count -gt 0) { $true }
-        else { $run.Result.answer }
+        else { "supported=$($run.Result.supported): $($run.Result.answer)" }
     } -RealModel
 
-    # ---------- Streaming ----------
-    Write-Host "`n== Live streaming through nginx while the model writes"
-    foreach ($target in @(@{ Name = 'nginx :3000'; Url = "$Web/pipeline/run" }, @{ Name = 'api :8000'; Url = "$Api/pipeline/run" })) {
-        Test-Check "token events arrive over time via $($target.Name), before the result" {
-            $events = Invoke-Stream $target.Url (New-RunBody (New-Graph @('p3_refund')) $QLab 'en')
-            $tokens = @($events | Where-Object { $_.type -eq 'token' })
-            $result = @($events | Where-Object { $_.type -eq 'result' })[0]
-            $agentRun = @($events | Where-Object { $_.stage -eq 'agent' -and $_.status -eq 'running' })[0]
-            if ($tokens.Count -lt 2) { return "only $($tokens.Count) token events" }
-            if ($null -eq $result) { return 'no result event' }
-            $spread = $tokens[-1].arrived_ms - $tokens[0].arrived_ms
-            $lead = $result.arrived_ms - $tokens[0].arrived_ms
-            if ($agentRun.arrived_ms -gt $tokens[0].arrived_ms) { return 'agent running arrived after the first token' }
-            if ($spread -lt 100 -or $lead -lt 100) { return "events arrived together (token spread $spread ms, first token $lead ms before result): buffered?" }
-            $true
-        } -Model
-    }
+    # ---------- Streaming: judged from the same two streamed answers, no extra requests ----------
+    Write-Host "`n== Live streaming while the model writes"
+    Test-Check 'token events arrive over time via nginx :3000, before the result' { Test-Streaming (& $summary).Events } -Model
+    Test-Check 'second PDF: cited answer from hostel-rules.pdf (streamed via :8000)' {
+        $run = & $hostel
+        $files = @($run.Result.citations | ForEach-Object { $_.file } | Sort-Object -Unique)
+        if ($run.Result.supported -eq $true -and ($files -join ',') -eq 'hostel-rules.pdf') { $true }
+        else { "supported=$($run.Result.supported), files=$($files -join ','): $($run.Result.answer)" }
+    } -Model
+    Test-Check 'token events arrive over time via api :8000, before the result' { Test-Streaming (& $hostel).Events } -Model
 
     # ---------- Web ----------
     Write-Host "`n== Chat page"
@@ -333,7 +416,9 @@ try {
     }
 }
 finally {
-    foreach ($id in @('p3_refund', 'p3_hostel', 'p3_esc', 'p3_scan')) { try { Invoke-Api 'DELETE' "$Api/sources/$id" | Out-Null } catch { } }
+    # p3_esc and p3_scan only test upload handling; the two sample sources are kept unless -Cleanup.
+    $remove = @('p3_esc', 'p3_scan') + $(if ($Cleanup) { @('p3_refund', 'p3_hostel') } else { @() })
+    foreach ($id in $remove) { try { Invoke-Api 'DELETE' "$Api/sources/$id" | Out-Null } catch { } }
     if ($UseFakeGemini) {
         Write-Host "`nRestoring the normal api (without the fake Gemini)..."
         if ($fakeProcess) { Stop-Process -Id $fakeProcess.Id -Force -ErrorAction SilentlyContinue }
@@ -343,8 +428,13 @@ finally {
 }
 
 # ---------- Summary ----------
-$total = $script:Pass + $script:Fail + $script:Skip
+$total = $script:Pass + $script:Fail + $script:Skip + $script:Blocked
 Write-Host ''
-Write-Host "Result: $($script:Pass) passed, $($script:Fail) failed, $($script:Skip) skipped (of $total), mode: $($script:Mode) Gemini"
-if ($script:Fail -eq 0 -and $script:Skip -eq 0) { Write-Host 'Phase 3 RAG verified.' -ForegroundColor Green; exit 0 }
+Write-Host ("Result: {0} passed, {1} failed, {2} skipped, {3} blocked by Gemini quota (of {4}), mode: {5} Gemini, {6} model request(s) sent" -f
+    $script:Pass, $script:Fail, $script:Skip, $script:Blocked, $total, $script:Mode, $script:GeminiRequests)
+if ($script:Blocked -gt 0) {
+    $hint = if ($script:DailyQuota) { 'The daily quota resets at midnight Pacific time.' } else { 'Wait a minute and run the script again.' }
+    Write-Host "Blocked checks say nothing about the feature: Gemini refused the request (HTTP 429). $hint" -ForegroundColor Magenta
+}
+if ($script:Fail -eq 0 -and $script:Skip -eq 0 -and $script:Blocked -eq 0) { Write-Host 'Phase 3 RAG verified.' -ForegroundColor Green; exit 0 }
 Write-Host 'Phase 3 RAG NOT fully verified.' -ForegroundColor Red; exit 1

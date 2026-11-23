@@ -66,7 +66,8 @@ export default function Chat() {
         if (ev.type === "result") setResult(ev);
         if (ev.type === "error") {
           setStages((s) => ({ ...s, [ev.node_id]: "error" }));
-          setError(`${ev.stage}: ${ev.message}`);
+          const quota = ev.code?.startsWith("quota_") ? "Model quota reached. " : "";
+          setError(`${quota}${ev.stage}: ${ev.message}`);
         }
       });
     } catch (err) {

@@ -2,6 +2,7 @@
 to answer from them with [n] citations, and streams the answer as token events while it is written.
 If nothing relevant is found, or the answer cites no real chunk, the agent says it does not know."""
 
+import time
 from collections.abc import Iterator
 
 from ...config import settings
@@ -13,12 +14,16 @@ from ..graph import SOURCE_TYPES, TOOL_TYPES, Graph, Node
 
 
 def _stream_answer(ctx: RunContext, node: Node, system: str, user: str) -> Iterator[dict]:
-    """Forward each Gemini piece as a token event; keep the full text and token counts on ctx."""
+    """Forward each Gemini piece as a token event; keep the full text and token counts on ctx.
+    "ms" is when the api received the piece (ms after the request was sent), so a client can compare
+    its own arrival times with the model's pace and tell real streaming from buffering."""
     text = ""
+    start = time.perf_counter()
     for piece in gemini.stream(system, user):
         if "text" in piece:
             text += piece["text"]
-            yield {"type": "token", "stage": "agent", "node_id": node.id, "text": piece["text"]}
+            yield {"type": "token", "stage": "agent", "node_id": node.id, "text": piece["text"],
+                   "ms": round((time.perf_counter() - start) * 1000)}
         else:
             ctx.usage = piece["usage"]
     ctx.answer = text.strip()

@@ -28,6 +28,35 @@ def reply_for(system: str, prompt: str) -> list[str]:
     return [" ".join(words[i:i + 4]) + " " for i in range(0, len(words), 4)]
 
 
+REQUESTS: dict[str, int] = {}  # requests seen per API key, so tests can count retries
+
+
+def _google_429(quota_id: str, retry_delay: str) -> dict:
+    """The shape of a real Gemini 429 body: QuotaFailure says which quota, RetryInfo how long to wait."""
+    return {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "You exceeded your current quota.",
+                      "details": [
+                          {"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                           "violations": [{"quotaId": quota_id, "quotaValue": "10"}]},
+                          {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay}]}}
+
+
+def quota_error(key: str, request_number: int) -> dict | None:
+    """Special keys simulate quota problems:
+    quota-daily          every request: daily quota used up
+    quota-rate-N         the first N requests: per-minute limit, then normal answers
+    quota-rate-forever   every request: per-minute limit
+    quota-exceeded       every request: a bare 429 with no details"""
+    if key == "quota-daily":
+        return _google_429("GenerateRequestsPerDayPerProjectPerModel-FreeTier", "30s")
+    if key == "quota-rate-forever":
+        return _google_429("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", "0.05s")
+    if key.startswith("quota-rate-") and request_number <= int(key.rsplit("-", 1)[1]):
+        return _google_429("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", "0.05s")
+    if key == "quota-exceeded":
+        return {"error": {"code": 429, "message": "Resource exhausted"}}
+    return None
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # keep test output quiet
         pass
@@ -39,10 +68,14 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'{"error": "missing x-goog-api-key header"}')
             return
-        if self.headers.get("x-goog-api-key") == "quota-exceeded":
+        key = self.headers.get("x-goog-api-key")
+        REQUESTS[key] = REQUESTS.get(key, 0) + 1
+        quota = quota_error(key, REQUESTS[key])
+        if quota:
             self.send_response(429)
+            self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"error": {"code": 429, "message": "Resource exhausted"}}')
+            self.wfile.write(json.dumps(quota).encode())
             return
         system = body["systemInstruction"]["parts"][0]["text"]
         prompt = body["contents"][0]["parts"][0]["text"]
