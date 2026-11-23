@@ -19,9 +19,18 @@ Never cut: cited answers, the model dropdown, cost on every answer, the Telugu a
 
 | Requirement | Where | Status |
 |---|---|---|
-| Document chunks are isolated between saved graphs, even when two graphs use the same source id | Phase 5 (source connectors rework): chunks keyed by graph scope + source id | Not started. Today chunks are keyed by source id only. |
-| Citations must support the actual claims, not just exist | Phase 5 (with the Telugu/Hindi eval): check each cited sentence against its chunk | Partly done in Phase 4: an answer made only of citation markers is never "supported". Claim-level checking not started. |
+| Document chunks are isolated between saved graphs, even when two graphs use the same source id | Phase 5 | Done: chunks are keyed by scope (`graph:<id>` or `inline`) + source id. |
+| Citations must support the actual claims, not just exist | Phase 5 | Done: every cited sentence must have its numbers in the cited chunk and be close to it in meaning (bge-m3, threshold 0.45 measured on the samples); others are removed. Limit: a sentence that is on-topic and has no numbers but says something the chunk does not can still pass. |
 | Canvas node highlighting is driven by the real `/pipeline/run` SSE events | Phase 6 | Event contract is stable: every stage event carries `node_id` and `status`. |
+
+## Phase 5 evaluation findings (fixed)
+
+The first runs of `scripts/eval_languages.py` found three pipeline bugs, now fixed with regression tests:
+1. "Rs. 300" was split into two sentences at "Rs.", so the claim check removed correct answers.
+2. Groq's gpt-oss writes citations as 【1】, which were not recognised.
+3. The chunk overlap was a fixed 80 characters, so a chunk could start in the middle of a sentence
+   ("test amount is refunded" without the "80 percent"); a model cited that half. The overlap is now whole
+   sentences.
 
 ## Known issues to revisit
 

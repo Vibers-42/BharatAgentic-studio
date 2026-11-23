@@ -1,12 +1,14 @@
 """Splits page text into overlapping chunks of about CHUNK_CHARS characters.
-It breaks on paragraph, then sentence, then word boundaries, so a chunk rarely cuts a sentence in half."""
+It breaks on paragraph, then sentence, then word boundaries, so a chunk rarely cuts a sentence in half.
+The overlap is made of whole sentences: the next chunk repeats the last full sentence(s) of the previous
+one, so a fact on a chunk boundary is complete in at least one chunk and never starts mid-sentence."""
 
 import re
 
-CHUNK_CHARS = 500
-OVERLAP_CHARS = 80
+from . import sentences
 
-SENTENCE_END = re.compile(r"(?<=[.!?।])\s+")  # "।" ends a sentence in Hindi
+CHUNK_CHARS = 500
+OVERLAP_CHARS = 200  # at most this much is repeated, always as whole sentences
 
 
 def _pieces(text: str) -> list[str]:
@@ -19,7 +21,7 @@ def _pieces(text: str) -> list[str]:
         if len(para) <= CHUNK_CHARS:
             out.append(para)
             continue
-        for sentence in SENTENCE_END.split(para):
+        for sentence in sentences.split(para):
             while len(sentence) > CHUNK_CHARS:  # one very long sentence: cut at a space
                 cut = sentence.rfind(" ", 0, CHUNK_CHARS)
                 cut = cut if cut > 0 else CHUNK_CHARS
@@ -30,6 +32,16 @@ def _pieces(text: str) -> list[str]:
     return out
 
 
+def _overlap(chunk: str) -> str:
+    """The last whole sentences of a chunk that fit in OVERLAP_CHARS (none if even the last one is longer)."""
+    kept: list[str] = []
+    for sentence in reversed(sentences.split(chunk)):
+        if sum(len(s) + 1 for s in kept) + len(sentence) > OVERLAP_CHARS:
+            break
+        kept.insert(0, sentence)
+    return " ".join(kept)
+
+
 def chunk_text(text: str) -> list[str]:
     chunks: list[str] = []
     current = ""
@@ -37,9 +49,8 @@ def chunk_text(text: str) -> list[str]:
         if current and len(current) + 1 + len(piece) > CHUNK_CHARS:
             chunks.append(current)
             # Start the next chunk with the end of this one, so facts on a boundary stay findable.
-            tail = current[-OVERLAP_CHARS:]
-            tail = tail[tail.find(" ") + 1:] if " " in tail else tail
-            current = f"{tail} {piece}"
+            tail = _overlap(current)
+            current = f"{tail} {piece}" if tail else piece
         else:
             current = f"{current} {piece}" if current else piece
     if current:

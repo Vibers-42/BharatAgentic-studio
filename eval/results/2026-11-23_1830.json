@@ -1,0 +1,1464 @@
+{
+ "run": "2026-11-23 18:30",
+ "rows": [
+  {
+   "model": "gemini",
+   "lang": "en",
+   "id": "q01",
+   "verdict": "BLOCKED",
+   "reason": "answered by local (quota_daily)",
+   "answer": "The consultation fee is Rs. 300 [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 5.2,
+   "usage": {
+    "input_tokens": 577,
+    "output_tokens": 14,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "gemini",
+   "lang": "en",
+   "id": "q02",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "en",
+   "id": "q03",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "en",
+   "id": "q04",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "en",
+   "id": "q05",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "en",
+   "id": "q06",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "en",
+   "id": "q07",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "en",
+   "id": "q08",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "en",
+   "id": "q09",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "en",
+   "id": "q10",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "en",
+   "id": "q11",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "en",
+   "id": "q12",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "te",
+   "id": "q01",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "te",
+   "id": "q02",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "te",
+   "id": "q03",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "te",
+   "id": "q04",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "te",
+   "id": "q05",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "te",
+   "id": "q06",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "te",
+   "id": "q07",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "te",
+   "id": "q08",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "te",
+   "id": "q09",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "te",
+   "id": "q10",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "te",
+   "id": "q11",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "te",
+   "id": "q12",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "hi",
+   "id": "q01",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "hi",
+   "id": "q02",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "hi",
+   "id": "q03",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "hi",
+   "id": "q04",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "hi",
+   "id": "q05",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "hi",
+   "id": "q06",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "hi",
+   "id": "q07",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "hi",
+   "id": "q08",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "hi",
+   "id": "q09",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "hi",
+   "id": "q10",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "hi",
+   "id": "q11",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "gemini",
+   "lang": "hi",
+   "id": "q12",
+   "verdict": "BLOCKED",
+   "reason": "quota_daily (not sent)",
+   "answer": "",
+   "answered_by": null
+  },
+  {
+   "model": "groq",
+   "lang": "en",
+   "id": "q01",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "The consultation fee is Rs. 300 [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.6,
+   "usage": {
+    "input_tokens": 620,
+    "output_tokens": 79,
+    "estimated": false
+   },
+   "cost": 0.011794
+  },
+  {
+   "model": "groq",
+   "lang": "en",
+   "id": "q02",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "A patient must cancel at least 2 hours before the appointment to receive a full refund of the consultation fee [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 1.0,
+   "usage": {
+    "input_tokens": 591,
+    "output_tokens": 142,
+    "estimated": false
+   },
+   "cost": 0.014603
+  },
+  {
+   "model": "groq",
+   "lang": "en",
+   "id": "q03",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "If a lab test is cancelled before the sample is collected, 80 percent of the test amount is refunded [1][2].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 587,
+    "output_tokens": 185,
+    "estimated": false
+   },
+   "cost": 0.01672
+  },
+  {
+   "model": "groq",
+   "lang": "en",
+   "id": "q04",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "Unopened medicines can be returned within 7 days with the original bill [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 465,
+    "output_tokens": 87,
+    "estimated": false
+   },
+   "cost": 0.010244
+  },
+  {
+   "model": "groq",
+   "lang": "en",
+   "id": "q05",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "Approved refunds are paid to the original payment method within 5 working days [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.6,
+   "usage": {
+    "input_tokens": 710,
+    "output_tokens": 90,
+    "estimated": false
+   },
+   "cost": 0.013482
+  },
+  {
+   "model": "groq",
+   "lang": "en",
+   "id": "q06",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "The clinic manager approves or rejects each refund request within 2 working days [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 586,
+    "output_tokens": 96,
+    "estimated": false
+   },
+   "cost": 0.012222
+  },
+  {
+   "model": "groq",
+   "lang": "en",
+   "id": "q07",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "The hostel gate closes at 9:30 PM every day[1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.6,
+   "usage": {
+    "input_tokens": 422,
+    "output_tokens": 85,
+    "estimated": false
+   },
+   "cost": 0.009601
+  },
+  {
+   "model": "groq",
+   "lang": "en",
+   "id": "q08",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "The monthly mess fee is Rs. 3,500 [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 422,
+    "output_tokens": 96,
+    "estimated": false
+   },
+   "cost": 0.010156
+  },
+  {
+   "model": "groq",
+   "lang": "en",
+   "id": "q09",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "Breakfast is served from 7:00 AM to 8:30 AM [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 1.2,
+   "usage": {
+    "input_tokens": 424,
+    "output_tokens": 92,
+    "estimated": false
+   },
+   "cost": 0.009979
+  },
+  {
+   "model": "groq",
+   "lang": "en",
+   "id": "q10",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "Parents may visit the hostel on Sundays between 10 AM and 5 PM [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.6,
+   "usage": {
+    "input_tokens": 421,
+    "output_tokens": 90,
+    "estimated": false
+   },
+   "cost": 0.009841
+  },
+  {
+   "model": "groq",
+   "lang": "en",
+   "id": "q11",
+   "verdict": "RIGHT",
+   "reason": "said it does not know",
+   "answer": "I don't know based on the connected sources.",
+   "answered_by": null,
+   "seconds": 0.1,
+   "usage": null,
+   "cost": null
+  },
+  {
+   "model": "groq",
+   "lang": "en",
+   "id": "q12",
+   "verdict": "RIGHT",
+   "reason": "said it does not know",
+   "answer": "I don't know based on the connected sources.",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.7,
+   "usage": {
+    "input_tokens": 425,
+    "output_tokens": 71,
+    "estimated": false
+   },
+   "cost": 0.008933
+  },
+  {
+   "model": "groq",
+   "lang": "te",
+   "id": "q01",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "కన్సల్టేషన్ ఫీజు Rs. 300 [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 418,
+    "output_tokens": 88,
+    "estimated": false
+   },
+   "cost": 0.009702
+  },
+  {
+   "model": "groq",
+   "lang": "te",
+   "id": "q02",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "కన్సల్టేషన్ ఫీజు పూర్తిగా వాపసు పొందడానికి, రోగి అపాయింట్‌మెంట్‌కు కనీసం 2 గంటల ముందు రద్దు చేయాలి [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 1.0,
+   "usage": {
+    "input_tokens": 743,
+    "output_tokens": 165,
+    "estimated": false
+   },
+   "cost": 0.017678
+  },
+  {
+   "model": "groq",
+   "lang": "te",
+   "id": "q03",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "శాంపిల్ తీసుకునే ముందు ల్యాబ్ టెస్ట్ రద్దు చేస్తే, పరీక్ష మొత్తం యొక్క 80 శాతం వాపసు ఇవ్వబడుతుంది [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 1.1,
+   "usage": {
+    "input_tokens": 522,
+    "output_tokens": 271,
+    "estimated": false
+   },
+   "cost": 0.020236
+  },
+  {
+   "model": "groq",
+   "lang": "te",
+   "id": "q04",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "తెరవని మందులను అసలు బిల్లుతో కలిసి 7 రోజుల్లోగా తిరిగి ఇవ్వవచ్చు [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 594,
+    "output_tokens": 126,
+    "estimated": false
+   },
+   "cost": 0.013835
+  },
+  {
+   "model": "groq",
+   "lang": "te",
+   "id": "q05",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "ఆమోదించిన రీఫండ్‌లు 5 పని దినాల్లో చెల్లిస్తారు [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 396,
+    "output_tokens": 155,
+    "estimated": false
+   },
+   "cost": 0.012802
+  },
+  {
+   "model": "groq",
+   "lang": "te",
+   "id": "q06",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "క్లినిక్ మేనేజర్ ప్రతి రీఫండ్ అభ్యర్థనను 2 పని దినాల్లో ఆమోదించు లేదా తిరస్కరించు నిర్ణయం తీసుకుంటారు [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.9,
+   "usage": {
+    "input_tokens": 490,
+    "output_tokens": 153,
+    "estimated": false
+   },
+   "cost": 0.013885
+  },
+  {
+   "model": "groq",
+   "lang": "te",
+   "id": "q07",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "హాస్టల్ గేట్ ప్రతి రోజూ రాత్రి 9:30కి మూసివేస్తారు [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.9,
+   "usage": {
+    "input_tokens": 437,
+    "output_tokens": 127,
+    "estimated": false
+   },
+   "cost": 0.011907
+  },
+  {
+   "model": "groq",
+   "lang": "te",
+   "id": "q08",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "నెలవారీ మెస్ ఫీజు Rs. 3,500 [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 431,
+    "output_tokens": 134,
+    "estimated": false
+   },
+   "cost": 0.012184
+  },
+  {
+   "model": "groq",
+   "lang": "te",
+   "id": "q09",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "అల్పాహారం 7:00 AM నుండి 8:30 AM వరకు వడ్డిస్తారు [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 437,
+    "output_tokens": 123,
+    "estimated": false
+   },
+   "cost": 0.011705
+  },
+  {
+   "model": "groq",
+   "lang": "te",
+   "id": "q10",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "తల్లిదండ్రులు ఆదివారం 10 AM నుండి 5 PM వరకు హాస్టల్‌ను సందర్శించవచ్చు [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.7,
+   "usage": {
+    "input_tokens": 439,
+    "output_tokens": 125,
+    "estimated": false
+   },
+   "cost": 0.011831
+  },
+  {
+   "model": "groq",
+   "lang": "te",
+   "id": "q11",
+   "verdict": "RIGHT",
+   "reason": "said it does not know",
+   "answer": "కనెక్ట్ చేసిన మూలాల ఆధారంగా నాకు ఈ సమాచారం తెలియదు.",
+   "answered_by": null,
+   "seconds": 0.1,
+   "usage": null,
+   "cost": null
+  },
+  {
+   "model": "groq",
+   "lang": "te",
+   "id": "q12",
+   "verdict": "RIGHT",
+   "reason": "said it does not know",
+   "answer": "కనెక్ట్ చేసిన మూలాల ఆధారంగా నాకు ఈ సమాచారం తెలియదు.",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.7,
+   "usage": {
+    "input_tokens": 434,
+    "output_tokens": 118,
+    "estimated": false
+   },
+   "cost": 0.011416
+  },
+  {
+   "model": "groq",
+   "lang": "hi",
+   "id": "q01",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "परामर्श शुल्क Rs. 300 है [1].",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 1.7,
+   "usage": {
+    "input_tokens": 412,
+    "output_tokens": 148,
+    "estimated": false
+   },
+   "cost": 0.01265
+  },
+  {
+   "model": "groq",
+   "lang": "hi",
+   "id": "q02",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "परामर्श शुल्क का पूरा रिफंड पाने के लिए अपॉइंटमेंट से कम से कम 2 घंटे पहले रद्द करना होगा [1]।",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 1.0,
+   "usage": {
+    "input_tokens": 602,
+    "output_tokens": 157,
+    "estimated": false
+   },
+   "cost": 0.015498
+  },
+  {
+   "model": "groq",
+   "lang": "hi",
+   "id": "q03",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "सैंपल लेने से पहले लैब टेस्ट रद्द करने पर टेस्ट की राशि का 80 प्रतिशत वापस मिलता है [1]।",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.9,
+   "usage": {
+    "input_tokens": 595,
+    "output_tokens": 149,
+    "estimated": false
+   },
+   "cost": 0.015007
+  },
+  {
+   "model": "groq",
+   "lang": "hi",
+   "id": "q04",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "बिना खोली दवाइयाँ 7 दिनों के भीतर लौटाई जा सकती हैं [1]",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 477,
+    "output_tokens": 120,
+    "estimated": false
+   },
+   "cost": 0.012058
+  },
+  {
+   "model": "groq",
+   "lang": "hi",
+   "id": "q05",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "स्वीकृत रिफंड मूल भुगतान विधि में 5 कार्य दिवसों के भीतर दिए जाते हैं [1]",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.7,
+   "usage": {
+    "input_tokens": 591,
+    "output_tokens": 147,
+    "estimated": false
+   },
+   "cost": 0.014855
+  },
+  {
+   "model": "groq",
+   "lang": "hi",
+   "id": "q06",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "क्लिनिक मैनेजर रिफंड अनुरोध पर 2 कार्य दिवसों के भीतर फैसला करते हैं [1]",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 1.1,
+   "usage": {
+    "input_tokens": 597,
+    "output_tokens": 161,
+    "estimated": false
+   },
+   "cost": 0.015637
+  },
+  {
+   "model": "groq",
+   "lang": "hi",
+   "id": "q07",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "हॉस्टल का गेट हर दिन रात 9:30 बजे बंद होता है [1]।",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 431,
+    "output_tokens": 108,
+    "estimated": false
+   },
+   "cost": 0.010874
+  },
+  {
+   "model": "groq",
+   "lang": "hi",
+   "id": "q08",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "मासिक मेस शुल्क Rs. 3,500 है [1]।",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 426,
+    "output_tokens": 105,
+    "estimated": false
+   },
+   "cost": 0.01066
+  },
+  {
+   "model": "groq",
+   "lang": "hi",
+   "id": "q09",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "हॉस्टल में नाश्ता सुबह 7:00 AM से 8:30 AM तक परोसा जाता है [1]",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 1.3,
+   "usage": {
+    "input_tokens": 433,
+    "output_tokens": 128,
+    "estimated": false
+   },
+   "cost": 0.011907
+  },
+  {
+   "model": "groq",
+   "lang": "hi",
+   "id": "q10",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "माता‑पिता रविवार को सुबह 10 वजे से शाम 5 वजे तक हॉस्टल में मिल सकते हैं [1]।",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 0.8,
+   "usage": {
+    "input_tokens": 431,
+    "output_tokens": 121,
+    "estimated": false
+   },
+   "cost": 0.011529
+  },
+  {
+   "model": "groq",
+   "lang": "hi",
+   "id": "q11",
+   "verdict": "RIGHT",
+   "reason": "said it does not know",
+   "answer": "जुड़े हुए स्रोतों के आधार पर मुझे यह जानकारी नहीं पता।",
+   "answered_by": null,
+   "seconds": 0.1,
+   "usage": null,
+   "cost": null
+  },
+  {
+   "model": "groq",
+   "lang": "hi",
+   "id": "q12",
+   "verdict": "RIGHT",
+   "reason": "said it does not know",
+   "answer": "जुड़े हुए स्रोतों के आधार पर मुझे यह जानकारी नहीं पता।",
+   "answered_by": "groq:openai/gpt-oss-120b",
+   "seconds": 1.9,
+   "usage": {
+    "input_tokens": 431,
+    "output_tokens": 112,
+    "estimated": false
+   },
+   "cost": 0.011075
+  },
+  {
+   "model": "local",
+   "lang": "en",
+   "id": "q01",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "The consultation fee is Rs. 300 [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 1.0,
+   "usage": {
+    "input_tokens": 577,
+    "output_tokens": 14,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "en",
+   "id": "q02",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "The patient must cancel at least 2 hours before the appointment to get a full refund of the consultation fee [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 3.0,
+   "usage": {
+    "input_tokens": 544,
+    "output_tokens": 25,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "en",
+   "id": "q03",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "80 percent of the test amount is refunded if a lab test is cancelled before the sample is collected [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 4.4,
+   "usage": {
+    "input_tokens": 540,
+    "output_tokens": 24,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "en",
+   "id": "q04",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "Unopened medicines can be returned within 7 days [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 2.2,
+   "usage": {
+    "input_tokens": 411,
+    "output_tokens": 14,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "en",
+   "id": "q05",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "Approved refunds are paid to the original payment method within 5 working days [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 5.3,
+   "usage": {
+    "input_tokens": 671,
+    "output_tokens": 18,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "en",
+   "id": "q06",
+   "verdict": "WRONG",
+   "reason": "said it does not know",
+   "answer": "I don't know based on the connected sources.",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 1.8,
+   "usage": {
+    "input_tokens": 539,
+    "output_tokens": 17,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "en",
+   "id": "q07",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "The hostel gate closes at 9:30 PM every day [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 1.8,
+   "usage": {
+    "input_tokens": 371,
+    "output_tokens": 17,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "en",
+   "id": "q08",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "The monthly mess fee is Rs. 3,500 [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 1.9,
+   "usage": {
+    "input_tokens": 371,
+    "output_tokens": 17,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "en",
+   "id": "q09",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "Breakfast is served from 7:00 AM to 8:30 AM [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 2.1,
+   "usage": {
+    "input_tokens": 373,
+    "output_tokens": 22,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "en",
+   "id": "q10",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "Parents may visit the hostel on Sundays between 10 AM and 5 PM [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 1.8,
+   "usage": {
+    "input_tokens": 370,
+    "output_tokens": 20,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "en",
+   "id": "q11",
+   "verdict": "RIGHT",
+   "reason": "said it does not know",
+   "answer": "I don't know based on the connected sources.",
+   "answered_by": null,
+   "seconds": 0.1,
+   "usage": null,
+   "cost": null
+  },
+  {
+   "model": "local",
+   "lang": "en",
+   "id": "q12",
+   "verdict": "RIGHT",
+   "reason": "said it does not know",
+   "answer": "I don't know based on the connected sources.",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 1.5,
+   "usage": {
+    "input_tokens": 374,
+    "output_tokens": 14,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "te",
+   "id": "q01",
+   "verdict": "WRONG",
+   "reason": "not written in te",
+   "answer": "The fee is Rs. 300 [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 2.1,
+   "usage": {
+    "input_tokens": 449,
+    "output_tokens": 13,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "te",
+   "id": "q02",
+   "verdict": "WRONG",
+   "reason": "said it does not know",
+   "answer": "కనెక్ట్ చేసిన మూలాల ఆధారంగా నాకు ఈ సమాచారం తెలియదు.",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 8.8,
+   "usage": {
+    "input_tokens": 868,
+    "output_tokens": 79,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "te",
+   "id": "q03",
+   "verdict": "WRONG",
+   "reason": "not written in te",
+   "answer": "80 percent of the test amount is refunded [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 4.2,
+   "usage": {
+    "input_tokens": 616,
+    "output_tokens": 13,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "te",
+   "id": "q04",
+   "verdict": "WRONG",
+   "reason": "missing 7",
+   "answer": "3 రోజుల్లోగా తిరిగి ఇవ్వవచ్చు [1]",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 5.3,
+   "usage": {
+    "input_tokens": 661,
+    "output_tokens": 46,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "te",
+   "id": "q05",
+   "verdict": "WRONG",
+   "reason": "not written in te",
+   "answer": "Approved refunds are paid to the original payment method within 5 working days [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 2.5,
+   "usage": {
+    "input_tokens": 454,
+    "output_tokens": 18,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "te",
+   "id": "q06",
+   "verdict": "WRONG",
+   "reason": "missing 2",
+   "answer": "5 పనించబడతాయి క్లినిక్ మేనేజర్ రీఫండ్ అభ్యర్తనాలను నరేయి తీసుకుంటారు [1]",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 7.6,
+   "usage": {
+    "input_tokens": 580,
+    "output_tokens": 106,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "te",
+   "id": "q07",
+   "verdict": "WRONG",
+   "reason": "not written in te",
+   "answer": "The hostel gate closes at 9:30 PM every day [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 1.0,
+   "usage": {
+    "input_tokens": 491,
+    "output_tokens": 17,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "te",
+   "id": "q08",
+   "verdict": "WRONG",
+   "reason": "not written in te",
+   "answer": "The monthly mess fee is Rs. 3,500 [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 1.9,
+   "usage": {
+    "input_tokens": 462,
+    "output_tokens": 17,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "te",
+   "id": "q09",
+   "verdict": "WRONG",
+   "reason": "said it does not know",
+   "answer": "కనెక్ట్ చేసిన మూలాల ఆధారంగా నాకు ఈ సమాచారం తెలియదు.",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 3.8,
+   "usage": {
+    "input_tokens": 495,
+    "output_tokens": 52,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "te",
+   "id": "q10",
+   "verdict": "WRONG",
+   "reason": "missing 10, 5",
+   "answer": "The hostel gate closes at 9:30 PM every day [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 2.3,
+   "usage": {
+    "input_tokens": 506,
+    "output_tokens": 17,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "te",
+   "id": "q11",
+   "verdict": "RIGHT",
+   "reason": "said it does not know",
+   "answer": "కనెక్ట్ చేసిన మూలాల ఆధారంగా నాకు ఈ సమాచారం తెలియదు.",
+   "answered_by": null,
+   "seconds": 0.1,
+   "usage": null,
+   "cost": null
+  },
+  {
+   "model": "local",
+   "lang": "te",
+   "id": "q12",
+   "verdict": "WRONG",
+   "reason": "answered an unanswerable question",
+   "answer": "The monthly mess fee is Rs. 3,500 [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 2.1,
+   "usage": {
+    "input_tokens": 481,
+    "output_tokens": 17,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "hi",
+   "id": "q01",
+   "verdict": "WRONG",
+   "reason": "not written in hi",
+   "answer": "The fee is Rs. 300 [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 1.8,
+   "usage": {
+    "input_tokens": 412,
+    "output_tokens": 13,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "hi",
+   "id": "q02",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "अपॉइंटमेंट से 2 घंटे पहले रद्द करना परामर्श शुल्क का पूरा रिफंड पाने के लिए आवश्यक है [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 7.0,
+   "usage": {
+    "input_tokens": 642,
+    "output_tokens": 83,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "hi",
+   "id": "q03",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "80 प्रतिशत लैिब टेस्ट की गणना मूल्य [1] वापस मिलता है [1]। [1]",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 6.7,
+   "usage": {
+    "input_tokens": 627,
+    "output_tokens": 57,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "hi",
+   "id": "q04",
+   "verdict": "WRONG",
+   "reason": "not written in hi",
+   "answer": "Unopened medicines can be returned within 7 days [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 2.7,
+   "usage": {
+    "input_tokens": 495,
+    "output_tokens": 14,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "hi",
+   "id": "q05",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "रिफंड कार्य दिवसों में 5 कार्य दिवस [1]।",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 4.9,
+   "usage": {
+    "input_tokens": 612,
+    "output_tokens": 37,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "hi",
+   "id": "q06",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "क्लिनिक मैनेजर रिफंड अनुरोध पर 2 कार्य दिवसों में फैसला करते हैं [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 4.5,
+   "usage": {
+    "input_tokens": 629,
+    "output_tokens": 65,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "hi",
+   "id": "q07",
+   "verdict": "WRONG",
+   "reason": "not written in hi",
+   "answer": "The hostel gate closes at 9:30 PM every day [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 2.0,
+   "usage": {
+    "input_tokens": 437,
+    "output_tokens": 17,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "hi",
+   "id": "q08",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "मासिक मेस शुल्क Rs. 3,500 [1] है।",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 2.4,
+   "usage": {
+    "input_tokens": 426,
+    "output_tokens": 30,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "hi",
+   "id": "q09",
+   "verdict": "RIGHT",
+   "reason": "",
+   "answer": "नाश्ता जारी किया जाता है सुबह 7:00 बजावे तक सुबह 8:30 बजावे तक [1]।",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 4.2,
+   "usage": {
+    "input_tokens": 440,
+    "output_tokens": 64,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "hi",
+   "id": "q10",
+   "verdict": "WRONG",
+   "reason": "missing 10, 5",
+   "answer": "माता-पिता हॉस्टल में कब मिलने आ सकते हैं? [1]",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 3.0,
+   "usage": {
+    "input_tokens": 440,
+    "output_tokens": 41,
+    "estimated": false
+   },
+   "cost": 0.0
+  },
+  {
+   "model": "local",
+   "lang": "hi",
+   "id": "q11",
+   "verdict": "RIGHT",
+   "reason": "said it does not know",
+   "answer": "जुड़े हुए स्रोतों के आधार पर मुझे यह जानकारी नहीं पता।",
+   "answered_by": null,
+   "seconds": 0.1,
+   "usage": null,
+   "cost": null
+  },
+  {
+   "model": "local",
+   "lang": "hi",
+   "id": "q12",
+   "verdict": "WRONG",
+   "reason": "answered an unanswerable question",
+   "answer": "The monthly mess fee is Rs. 3,500 [1].",
+   "answered_by": "local:qwen2.5:3b",
+   "seconds": 2.0,
+   "usage": {
+    "input_tokens": 439,
+    "output_tokens": 17,
+    "estimated": false
+   },
+   "cost": 0.0
+  }
+ ]
+}

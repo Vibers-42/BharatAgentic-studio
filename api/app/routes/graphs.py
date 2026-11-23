@@ -52,3 +52,26 @@ def list_graphs():
 @router.get("/{graph_id}")
 def get_graph(graph_id: int):
     return _to_json(load_graph(graph_id))
+
+
+@router.post("/{graph_id}/ingest")
+def ingest_graph_sources(graph_id: int):
+    """Ingest every link-based source of a saved graph from its node settings (repo url, docs url),
+    into this graph's own scope. PDF sources need an upload: POST /sources/{id}/pdf?graph_id=..."""
+    from ..rag.ingest import IngestError, ingest_repo, ingest_url
+    from ..rag.store import graph_scope
+
+    graph, scope, results = load_graph(graph_id), graph_scope(graph_id), []
+    for node in graph.nodes:
+        url = node.config.get("url")
+        try:
+            if node.type == "source_repo" and url:
+                results.append({"node": node.id, "ok": True, **ingest_repo(node.id, url, scope)})
+            elif node.type == "source_doc" and url:
+                results.append({"node": node.id, "ok": True, **ingest_url(node.id, url, scope)})
+            elif node.type in ("source_doc", "source_repo"):
+                results.append({"node": node.id, "ok": False, "error": "No url in the node config; upload a PDF with "
+                                f"POST /sources/{node.id}/pdf?graph_id={graph_id}."})
+        except (IngestError, ValueError) as exc:  # ValueError covers a refused private address
+            results.append({"node": node.id, "ok": False, "error": str(exc)})
+    return {"graph_id": graph_id, "scope": scope, "sources": results}

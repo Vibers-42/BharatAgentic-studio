@@ -104,7 +104,7 @@ def test_upload_file_name_cannot_escape_folder(client, store, monkeypatch, tmp_p
     r = client.post("/sources/test_esc/pdf", files={"file": ("../../evil.pdf", make_pdf(REFUND_POLICY), "application/pdf")})
     assert r.status_code == 201 and r.json()["file"] == "evil.pdf"
     from pathlib import Path
-    assert (Path(sources.settings.upload_dir) / "test_esc" / "evil.pdf").exists()
+    assert (Path(sources.settings.upload_dir) / "inline" / "test_esc" / "evil.pdf").exists()
     assert not (Path(sources.settings.upload_dir).parent / "evil.pdf").exists()
     r = client.post("/sources/test_esc/pdf", files={"file": ("..\\..\\win.pdf", make_pdf(REFUND_POLICY), "application/pdf")})
     assert r.status_code == 201 and r.json()["file"] == "win.pdf"

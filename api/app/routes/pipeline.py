@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from ..pipeline.engine import run_pipeline
 from ..pipeline.graph import MODELS, Graph
 from ..pipeline.validate import validate_graph
+from ..rag.store import graph_scope
 from .graphs import load_graph
 from .users import user_id
 
@@ -64,7 +65,8 @@ def run(req: RunRequest, stream: bool = True):
         raise HTTPException(400, f"Unknown model '{req.model}'. Choose one of: {', '.join(MODELS)}.")
     uid = resolve_user(req.user)  # 400 for an unknown user, before anything runs
 
-    events = run_pipeline(graph, req.question, req.language, req.model, uid)
+    # A saved graph searches only its own chunks; a graph sent with the question uses the "inline" scope.
+    events = run_pipeline(graph, req.question, req.language, req.model, uid, graph_scope(req.graph_id))
     if not stream:
         return {"events": list(events)}
     return StreamingResponse(

@@ -55,6 +55,8 @@ def offline_models(monkeypatch, request):
         monkeypatch.setattr(pipeline, "resolve_user", lambda name: None)
     if "real_models" in request.keywords:
         return
-    monkeypatch.setattr(agent, "retrieve", lambda question, source_ids: ([], []))
+    monkeypatch.setattr(agent, "retrieve", lambda question, source_ids, scope="inline": ([], []))
+    from app.rag import claims
+    monkeypatch.setattr(claims, "verify", lambda answer, chunks: {"answer": answer, "claims": [], "removed": 0})
     for provider in (gemini, groq, ollama):
         monkeypatch.setattr(provider, "stream", fake_stream)

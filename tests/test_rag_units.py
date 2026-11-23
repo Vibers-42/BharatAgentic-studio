@@ -99,3 +99,18 @@ def test_answer_of_only_markers_has_no_citations():
     # A small model once replied just "[2]": that states nothing, so it must not count as supported.
     assert citations.check("[2]", make_chunks(3))["citations"] == []
     assert citations.check(" [1][2]. ", make_chunks(3))["citations"] == []
+
+
+def test_overlap_is_whole_sentences_so_boundary_facts_stay_complete():
+    # Regression (2026-11-23): a fixed 80-character overlap started chunk 1 with "test amount is refunded",
+    # half of the 80-percent sentence, and a model cited that half.
+    chunks = chunker.chunk_text(" ".join(REFUND_POLICY[0]))
+    fact = "If a lab test is cancelled before the sample is collected, 80 percent of the test amount is refunded."
+    for c in chunks[1:]:
+        assert c[0].isupper(), f"chunk starts mid-sentence: {c[:40]!r}"
+    assert all(fact in c for c in chunks if "test amount is refunded" in c)
+
+
+def test_rs_amount_does_not_split_a_chunk_sentence():
+    from app.rag import sentences
+    assert sentences.split("The fee is Rs. 300. It is refunded in full.") == ["The fee is Rs. 300.", "It is refunded in full."]

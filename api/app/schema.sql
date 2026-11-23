@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 -- Phase 3: page number of the chunk inside a PDF, shown in citations.
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS page INT;
+-- Phase 5: scope keeps chunks of different saved graphs apart even when they use the same source id
+-- ("graph:<id>" for a saved graph, "inline" for a graph sent with the question).
+-- origin is where a chunk came from (a GitHub file or page URL), for clickable citations.
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'inline';
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS origin TEXT;
+CREATE INDEX IF NOT EXISTS chunks_scope_source_idx ON chunks (scope, source_id);
 
 CREATE INDEX IF NOT EXISTS chunks_source_idx ON chunks (source_id);
 CREATE INDEX IF NOT EXISTS chunks_embedding_idx ON chunks USING hnsw (embedding vector_cosine_ops);

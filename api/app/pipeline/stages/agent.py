@@ -1,8 +1,9 @@
 """Agent stage: retrieves chunks from the sources drawn into the agent (and only those), asks the chosen
 model (through generate(), with retry and local fallback) to answer from them with [n] citations, and
 streams the answer as token events while it is written. Every model answer gets its token counts and
-estimated cost, and is logged in the usage table. If nothing relevant is found, or the answer cites no
-real chunk, the agent says it does not know."""
+estimated cost, and is logged in the usage table. Each cited sentence is then checked against the chunk
+it cites (numbers and meaning) and dropped if unsupported. If nothing relevant is found, or nothing
+supported is left, the agent says it does not know."""
 
 import time
 from collections.abc import Iterator
@@ -11,7 +12,7 @@ from ... import usage
 from ...config import settings
 from ...models import generate, pricing
 from ...models.generate import LANGUAGE_NOTES, LOCAL, AllProvidersFailed
-from ...rag import citations, prompt
+from ...rag import citations, claims, prompt
 from ...rag.retrieve import retrieve
 from ..context import RunContext
 from ..graph import SOURCE_TYPES, TOOL_TYPES, Graph, Node
@@ -97,8 +98,9 @@ def run(ctx: RunContext, node: Node, graph: Graph) -> Iterator[dict]:
         return finish(mode="direct", model_called=True)
 
     # Search only the connected sources; an unconnected source is never passed to retrieve().
-    relevant, candidates = retrieve(ctx.question, [n.id for n in ctx.sources])
+    relevant, candidates = retrieve(ctx.question, [n.id for n in ctx.sources], ctx.scope)
     detail["retrieval"] = {
+        "scope": ctx.scope,
         "searched": [n.id for n in ctx.sources],
         "min_similarity": settings.min_similarity,
         "candidates": [{"source_id": c.source_id, "file": c.file_name, "chunk": c.chunk_index,
@@ -120,5 +122,18 @@ def run(ctx: RunContext, node: Node, graph: Graph) -> Iterator[dict]:
         reason = ("The model found no answer in the sources." if citations.is_dont_know(checked["answer"])
                   else "The model's answer cited no real source chunk, so it was not shown.")
         return finish(mode="rag", model_called=True, reason=reason, invalid_markers=checked["invalid_markers"])
-    ctx.answer, ctx.supported = checked["answer"], True
-    return finish(mode="rag", model_called=True, invalid_markers=checked["invalid_markers"])
+    # Each cited sentence must be backed by the chunk it cites (numbers and meaning); others are removed.
+    try:
+        verified = claims.verify(checked["answer"], relevant)
+    except Exception as exc:  # e.g. Ollama down: keep the cited answer, but say it was not checked
+        ctx.warnings.append(f"Claims were not checked against the sources: {exc}")
+        verified = {"answer": checked["answer"], "claims": [], "removed": 0, "checked": False}
+    ctx.claims = verified["claims"]
+    if not verified["answer"]:
+        ctx.answer, ctx.supported, ctx.citations = prompt.DONT_KNOW[ctx.language], False, []
+        return finish(mode="rag", model_called=True, claims=ctx.claims,
+                      reason="No sentence of the model's answer was backed by the source it cited.")
+    rechecked = citations.check(verified["answer"], relevant)  # keep only citations still used
+    ctx.answer, ctx.citations, ctx.supported = rechecked["answer"], rechecked["citations"], bool(rechecked["citations"])
+    return finish(mode="rag", model_called=True, invalid_markers=checked["invalid_markers"], claims=ctx.claims,
+                  claims_removed=verified["removed"])

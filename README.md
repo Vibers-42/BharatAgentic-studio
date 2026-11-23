@@ -42,6 +42,7 @@ powershell -ExecutionPolicy Bypass -File scripts\verify_phase1.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase2.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase3.ps1                  # add -UseFakeGemini without a key
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase4.ps1                  # fallback and failure injection
+powershell -ExecutionPolicy Bypass -File scripts\verify_phase5.ps1                  # connectors, isolation, claims
 ```
 
 ## Pipeline graph and API
@@ -125,6 +126,30 @@ each provider is one small file: [gemini.py](api/app/models/gemini.py), [groq.py
   the header. Endpoints: `GET /usage/totals`, `/usage/by-user`, `/usage/by-model`, `/usage/by-day`,
   `/usage/recent` (add `?user=<name>`); `GET /users`, `POST /users`.
 
+## More sources, isolation and claim checks (Phase 5)
+
+Three connectors, all chunked, embedded with bge-m3 and stored per source node:
+
+| Source | How to add it | Notes |
+|---|---|---|
+| PDF | Chat page, or `POST /sources/{id}/pdf` | text per page; scanned PDFs are refused |
+| Docs link | Chat page, or `POST /sources/{id}/url {"url": ...}` | one page (HTML, text or a PDF link); links are not followed |
+| GitHub repo | Chat page, or `POST /sources/{id}/repo {"url": "https://github.com/owner/repo"}` | one zip download; docs and code files, per file, each chunk linked to the file at that commit; `GITHUB_TOKEN` for private repos |
+
+- **Links are fetched safely:** only http(s), every redirect checked, and any address that is private or
+  internal (Docker services such as `ollama` and `db`, `127.0.0.1`, `169.254.169.254`) is refused.
+- **Saved graphs keep their documents apart.** Add `?graph_id=N` to a source endpoint to store chunks for
+  that saved graph only; running the graph by `graph_id` searches only them, even if another graph uses
+  the same source id. Graphs sent with the question use their own "inline" scope.
+  `POST /graphs/{id}/ingest` ingests every link-based source of a saved graph from its node settings.
+- **Citations must back the claims.** Each sentence of an answer is checked against the chunk it cites:
+  every number in it must appear in that chunk, and its meaning must be close to it (bge-m3, works across
+  languages). Unsupported or uncited sentences are removed and listed on the answer card; if nothing is
+  left, the answer is "I don't know".
+- **Telugu and Hindi evaluation:** [eval/questions.json](eval/questions.json) has 12 questions in each
+  language with the expected source; `python scripts/eval_languages.py` runs them on every model and
+  writes [eval/RESULTS.md](eval/RESULTS.md).
+
 ## Containers
 
 | Container    | Job |
@@ -153,5 +178,30 @@ web/                 React frontend
 
 - Cost is an estimate from a price table, not a bill.
 - A local model has no API fee, but still uses the laptop's electricity and time.
+
+### Limits of the small local model (qwen2.5:3b), measured
+
+From [eval/RESULTS.md](eval/RESULTS.md) (2026-11-23, 12 questions per language, same sources for every model):
+
+| Model | English | Telugu | Hindi |
+|---|---|---|---|
+| Groq `openai/gpt-oss-120b` | 12/12 | 12/12 | 12/12 |
+| Local `qwen2.5:3b` | 11/12 | **1/12** | 7/12 |
+| Gemini `gemini-2.5-flash` | not measured: daily free quota used up that day | | |
+
+What goes wrong with the local model, in its own answers:
+- **Answers in English** to Telugu or Hindi questions (5 of 12 in Telugu, 3 of 12 in Hindi). The app flags these
+  on the answer ("not written in Telugu") instead of hiding them.
+- **Wrong numbers or a different fact** in Telugu and Hindi: "3 days" instead of 7, or the gate time when
+  asked about visiting hours. The claim check removes a number that is not in the cited source, but it
+  cannot tell that a true fact answers the wrong question.
+- **Answers questions that have no answer**: asked for the yearly hostel rent, it gave the monthly mess
+  fee (a true, cited fact, but not what was asked).
+- **Gives up** ("I don't know") on some answerable questions, or writes sentences without citations,
+  which the claim check then removes.
+- It runs on the laptop's CPU: about 3-25 seconds per answer here.
+
+Use it as the always-available fallback and for English; use Gemini or Groq for Telugu and Hindi.
+The Telugu and Hindi test questions were written for this project and should be reviewed by a native speaker.
 
 See [PHASES.md](PHASES.md) for the build plan.

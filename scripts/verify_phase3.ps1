@@ -417,7 +417,7 @@ try {
         $html = (Invoke-Api 'GET' 'http://127.0.0.1:3000/').Text
         if ($html -notmatch 'src="(/assets/[^"]+\.js)"') { return 'no script tag' }
         $js = (Invoke-Api 'GET' "http://127.0.0.1:3000$($Matches[1])").Text
-        $missing = @('chat_pdf', 'Upload a PDF', 'Connected to agent', 'pipeline/run') | Where-Object { $js -notmatch [regex]::Escape($_) }
+        $missing = @('chat_pdf', 'Connected to agent', 'pipeline/run', 'citations') | Where-Object { $js -notmatch [regex]::Escape($_) }
         if ($missing.Count -eq 0) { $true } else { "missing: $($missing -join ', ')" }
     }
 }

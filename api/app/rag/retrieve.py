@@ -5,11 +5,11 @@ from ..config import settings
 from . import embeddings, store
 
 
-def retrieve(question: str, source_ids: list[str]) -> tuple[list[store.Chunk], list[store.Chunk]]:
-    """Return (relevant chunks, all top-k candidates). Candidates are kept for the event detail,
-    so the UI and tests can see why something was judged not relevant."""
+def retrieve(question: str, source_ids: list[str], scope: str = store.INLINE) -> tuple[list[store.Chunk], list[store.Chunk]]:
+    """Return (relevant chunks, all top-k candidates) from the given sources in this scope. Candidates are
+    kept for the event detail, so the UI and tests can see why something was judged not relevant."""
     if not source_ids:
         return [], []
-    candidates = store.search(embeddings.embed_one(question), source_ids, settings.top_k)
+    candidates = store.search(embeddings.embed_one(question), source_ids, settings.top_k, scope)
     relevant = [c for c in candidates if c.similarity >= settings.min_similarity]
     return relevant, candidates

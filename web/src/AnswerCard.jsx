@@ -40,7 +40,11 @@ export default function AnswerCard({ streamed, result, busy }) {
         <ol className="citations">
           {result.citations.map((c) => (
             <li key={c.n} value={c.n}>
-              <strong>{c.file}</strong>
+              {c.origin ? (
+                <a href={c.origin} target="_blank" rel="noreferrer"><strong>{c.file}</strong></a>
+              ) : (
+                <strong>{c.file}</strong>
+              )}
               {c.page ? `, page ${c.page}` : ""}, chunk {c.chunk}
               <span className="muted"> · similarity {c.similarity}</span>
               <blockquote>{c.snippet}…</blockquote>
@@ -72,6 +76,12 @@ export default function AnswerCard({ streamed, result, busy }) {
         <span className="badge">{result.language}</span>
       </div>
       {result.model_note && <p className="muted small">{result.model_note}</p>}
+      {result.claims?.some((c) => c.verdict !== "supported") && (
+        <p className="notice small">
+          Removed because the cited source did not back them:{" "}
+          {result.claims.filter((c) => c.verdict !== "supported").map((c) => `"${c.sentence}" (${c.reason})`).join("; ")}
+        </p>
+      )}
       {result.cost && result.comparison?.length > 0 && (
         <p className="muted small">{comparisonText(result.comparison, used)} Estimates, not a bill.</p>
       )}

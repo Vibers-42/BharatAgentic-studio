@@ -9,7 +9,8 @@ Run:  python tests/fake_gemini.py 8765 [pause_seconds]
 A pause of 0 sends every piece at once, which is how a buffering proxy would look to the client.
 
 Answers: with sources it repeats the first sentence of source [1] and cites [1]; if the question
-contains FAKE_BAD_CITATION it cites [9] instead; with no sources it sends a short greeting.
+contains FAKE_BAD_CITATION it cites [9] instead; FAKE_WRONG_NUMBER makes it claim a number the source
+does not contain; FAKE_UNCITED adds a sentence without a citation. With no sources it sends a greeting.
 
 Faults, triggered by a word in the question (Gemini and Groq only):
   FAULT_500        HTTP 500 server error, every time
@@ -34,10 +35,17 @@ REQUESTS: dict[str, int] = {}   # requests seen per API key / per (provider, que
 def reply_for(prompt: str) -> list[str]:
     if "Sources:" not in prompt:
         return ["Hello! ", "Connect a source ", "to get cited answers."]
-    first = re.search(r"\[1\] \([^)]*\)\n(.+?)(?:\.|$)", prompt, re.S)
-    fact = " ".join(first.group(1).split())[:160] if first else "the source says so"
+    # Quote the first real sentence of source [1] (5+ words), not a heading like "4." or "1. Fees".
+    block = re.search(r"\[1\] \([^)]*\)\n(.+?)(?:\n\n\[2\]|\n\nQuestion:|$)", prompt, re.S)
+    sentences = re.split(r"(?<=[.!?])\s+(?![\d(a-z])", " ".join(block.group(1).split())) if block else []
+    fact = next((s.rstrip(".") for s in sentences if len(s.split()) >= 5), "the source says so")[:160]
     marker = "[9]" if "FAKE_BAD_CITATION" in prompt else "[1]"
-    words = f"According to the document, {fact}. {marker}".split(" ")
+    text = f"According to the document, {fact}. {marker}"
+    if "FAKE_WRONG_NUMBER" in prompt:  # a claim with a number the source does not contain
+        text = f"According to the document, the fee is Rs. 98765 for everything {marker}."
+    if "FAKE_UNCITED" in prompt:       # an extra sentence with no citation at all
+        text += " This policy is the most generous in the country."
+    words = text.split(" ")
     return [" ".join(words[i:i + 4]) + " " for i in range(0, len(words), 4)]
 
 

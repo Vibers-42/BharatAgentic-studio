@@ -1,6 +1,10 @@
 // Builds the pipeline graph JSON the chat sends. This fixed layout stands in for the canvas until
-// Phase 6: the PDF source is in the graph only while "Connected to agent" is ticked.
-export const SOURCE_ID = "chat_pdf";
+// Phase 6: a source is in the graph only while it holds content and its "connected" box is ticked.
+export const SOURCES = [
+  { id: "chat_pdf", type: "source_doc", kind: "pdf", label: "PDF" },
+  { id: "chat_repo", type: "source_repo", kind: "repo", label: "GitHub repo" },
+  { id: "chat_url", type: "source_doc", kind: "url", label: "Docs link" },
+];
 
 export const STAGES = [
   ["n1", "input", "Input"],
@@ -10,7 +14,8 @@ export const STAGES = [
   ["n5", "output", "Output"],
 ];
 
-export function buildGraph({ fileName, connected, language, model }) {
+// sources: [{ id, type, config, connected }]
+export function buildGraph({ sources, language, model }) {
   const nodes = [
     { id: "n1", type: "input", config: {} },
     { id: "n2", type: "guardrails", config: { block: ["empty", "abuse", "off_topic"] } },
@@ -24,9 +29,9 @@ export function buildGraph({ fileName, connected, language, model }) {
     { from: "n3", to: "n4" },
     { from: "n4", to: "n5" },
   ];
-  if (fileName && connected) {
-    nodes.push({ id: SOURCE_ID, type: "source_doc", config: { file: fileName } });
-    edges.push({ from: SOURCE_ID, to: "n4" });
+  for (const s of sources.filter((s) => s.connected)) {
+    nodes.push({ id: s.id, type: s.type, config: s.config });
+    edges.push({ from: s.id, to: "n4" });
   }
   return { nodes, edges };
 }

@@ -24,7 +24,7 @@ def spy_retrieve(monkeypatch):
     """Records which source ids were searched and returns REFUND_CHUNK for any search."""
     calls = []
 
-    def fake(question, source_ids):
+    def fake(question, source_ids, scope="inline"):
         calls.append(list(source_ids))
         return ([REFUND_CHUNK], [REFUND_CHUNK]) if source_ids else ([], [])
 
@@ -84,7 +84,7 @@ def test_unconnected_source_never_searched(monkeypatch, spy_retrieve, full_graph
 
 
 def test_nothing_relevant_means_dont_know_without_model_call(monkeypatch, full_graph):
-    monkeypatch.setattr(agent, "retrieve", lambda q, ids: ([], [REFUND_CHUNK]))
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([], [REFUND_CHUNK]))
     called = []
     monkeypatch.setattr(gemini, "stream", lambda s, p: called.append(1) or iter(()))
     events = run(only_s1(full_graph), "What time does the hostel gate close?")
@@ -169,6 +169,20 @@ def test_every_answer_carries_tokens_and_cost(default_graph):
 
 
 def test_no_model_call_means_no_cost(monkeypatch, full_graph):
-    monkeypatch.setattr(agent, "retrieve", lambda q, ids: ([], []))
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([], []))
     result = run(only_s1(full_graph), "What time does the hostel gate close?")[-1]
     assert result["model"] is None and result["cost"] is None and result["usage"] is None
+
+
+def test_answer_in_the_wrong_language_is_flagged(monkeypatch, spy_retrieve, full_graph):
+    # The small local model answered Telugu questions in English in the evaluation: that must show.
+    answer_with(monkeypatch, "The hostel gate closes at 9:30 PM every day [1].")
+    result = run(only_s1(full_graph), "హాస్టల్ గేట్ ఎన్ని గంటలకు మూసివేస్తారు?")[-1]
+    assert result["language"] == "te" and result["language_match"] is False
+    assert any("not written in Telugu" in w for w in result["warnings"])
+
+
+def test_answer_in_the_right_language_is_not_flagged(monkeypatch, spy_retrieve, full_graph):
+    answer_with(monkeypatch, "80 percent is refunded [1].")
+    result = run(only_s1(full_graph), "lab test refund?", "en")[-1]
+    assert result["language_match"] is True and result["warnings"] == []

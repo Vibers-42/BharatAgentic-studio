@@ -230,3 +230,29 @@ body {
   font-size: 0.85em;
   margin: 6px 0 0;
 }
+
+/* Phase 5: three source connectors */
+.source-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 0;
+  border-top: 1px solid #efefea;
+}
+
+.source-row strong {
+  min-width: 100px;
+}
+
+.link-input {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  min-width: 240px;
+}
+
+.link-input input {
+  flex: 1;
+  padding: 5px 8px;
+}

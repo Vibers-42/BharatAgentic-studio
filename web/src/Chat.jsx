@@ -1,9 +1,10 @@
-// Chat screen: upload a PDF source, choose whether it is connected to the agent, pick a model, ask a
-// question, and watch the five stages and the answer stream in from the real pipeline events.
+// Chat screen: add sources (PDF, GitHub repo, docs link), choose which are connected to the agent, pick
+// a model, ask a question, and watch the five stages and the answer stream in from the real pipeline events.
 import { useEffect, useState } from "react";
-import { buildGraph, SOURCE_ID, STAGES } from "./graph.js";
+import { buildGraph, SOURCES, STAGES } from "./graph.js";
 import { runPipeline } from "./sse.js";
 import AnswerCard from "./AnswerCard.jsx";
+import SourcePanel from "./SourcePanel.jsx";
 
 const LANGUAGES = [
   ["", "Auto (from question)"],
@@ -13,9 +14,7 @@ const LANGUAGES = [
 ];
 
 export default function Chat({ user }) {
-  const [source, setSource] = useState(null); // {file, chunks} once a PDF is ingested
-  const [connected, setConnected] = useState(true);
-  const [uploading, setUploading] = useState(false);
+  const [sources, setSources] = useState({}); // source id -> { info, config, connected }
   const [language, setLanguage] = useState("");
   const [question, setQuestion] = useState("");
   const [stages, setStages] = useState({}); // node id -> running/done/blocked/skipped
@@ -28,35 +27,11 @@ export default function Chat({ user }) {
   const [notices, setNotices] = useState([]); // fallbacks and discarded partial answers, as they happen
 
   useEffect(() => {
-    fetch(`/api/sources/${SOURCE_ID}`)
-      .then((r) => r.json())
-      .then((info) => info.chunks > 0 && setSource(info))
-      .catch(() => {});
     fetch("/api/models")
       .then((r) => r.json())
       .then((data) => setModels(data.models))
       .catch(() => {});
   }, []);
-
-  async function upload(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    setError("");
-    const form = new FormData();
-    form.append("file", file);
-    try {
-      const res = await fetch(`/api/sources/${SOURCE_ID}/pdf`, { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || `Upload failed (HTTP ${res.status})`);
-      setSource(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setUploading(false);
-      e.target.value = "";
-    }
-  }
 
   async function ask(e) {
     e.preventDefault();
@@ -66,7 +41,15 @@ export default function Chat({ user }) {
     setResult(null);
     setError("");
     setNotices([]);
-    const graph = buildGraph({ fileName: source?.file, connected, language, model });
+    // Only sources that hold content and are ticked "connected" become nodes with a line to the agent.
+    const connectedSources = SOURCES.filter((src) => sources[src.id]?.info?.chunks > 0)
+      .map((src) => ({
+        id: src.id,
+        type: src.type,
+        config: sources[src.id].config || (src.kind === "pdf" ? { file: sources[src.id].info.file } : {}),
+        connected: sources[src.id].connected ?? true,
+      }));
+    const graph = buildGraph({ sources: connectedSources, language, model });
     try {
       await runPipeline({ question, language: language || null, graph, model, user }, (ev) => {
         if (ev.type === "stage") setStages((s) => ({ ...s, [ev.node_id]: ev.status }));
@@ -95,22 +78,7 @@ export default function Chat({ user }) {
 
   return (
     <section>
-      <div className="card">
-        <h2>Source</h2>
-        <label className="upload">
-          <input type="file" accept="application/pdf,.pdf" onChange={upload} disabled={uploading} />
-          {uploading ? "Reading and embedding…" : source ? "Replace PDF" : "Upload a PDF"}
-        </label>
-        {source && (
-          <p className="muted">
-            {source.file}: {source.chunks} chunks stored
-            <label className="check">
-              <input type="checkbox" checked={connected} onChange={(e) => setConnected(e.target.checked)} />
-              Connected to agent
-            </label>
-          </p>
-        )}
-      </div>
+      <SourcePanel state={sources} setState={setSources} />
 
       <ol className="pipeline" aria-label="Pipeline stages">
         {STAGES.map(([id, , label]) => (
