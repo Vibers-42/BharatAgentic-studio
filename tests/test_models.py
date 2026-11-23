@@ -326,3 +326,8 @@ def test_comparison_prices_the_same_tokens_on_every_model():
                                ("local", "qwen2.5:3b", True)], 1000, 100)
     by = {r["model"]: r for r in rows}
     assert by["gemini"]["usd"] > 0 and by["groq"]["priced"] is False and by["local"]["api_fee"] is False
+
+
+def test_default_groq_model_is_priced():
+    c = pricing.cost("openai/gpt-oss-120b", 1_000_000, 1_000_000)
+    assert c["usd"] == pytest.approx(0.15 + 0.60) and c["priced"] is True

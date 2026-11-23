@@ -73,7 +73,11 @@ def test_local_answer_costs_nothing_but_records_compute(client, default_graph):
     assert row["local_compute_ms"] == result["response_ms"]
 
 
-def test_unpriced_model_logs_null_cost(client, default_graph):
+def test_unpriced_model_logs_null_cost(client, default_graph, monkeypatch):
+    import dataclasses
+    from app.models import groq
+    # llama-3.3-70b-versatile has no published price in prices.json
+    monkeypatch.setattr(groq, "settings", dataclasses.replace(groq.settings, groq_model="llama-3.3-70b-versatile"))
     ask(client, default_graph, "p4_bob", "groq")
     row = latest(client, "p4_bob")
     assert row["model"].startswith("groq:") and row["cost_usd"] is None
@@ -129,4 +133,5 @@ def test_models_endpoint_lists_all_three(client):
     keys = {m["key"]: m for m in body["models"]}
     assert set(keys) == {"gemini", "groq", "local"}
     assert keys["local"]["local"] is True and keys["local"]["input_per_million_usd"] == 0
-    assert keys["groq"]["priced"] is False and body["prices_checked_on"] and body["fallback"] == "local"
+    assert keys["groq"]["model_id"] == "openai/gpt-oss-120b" and keys["groq"]["priced"] is True
+    assert body["prices_checked_on"] and body["fallback"] == "local"

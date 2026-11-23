@@ -18,6 +18,13 @@
       "source": "https://aistudio.google.com/docs/pricing",
       "status": "Paid tier, standard."
     },
+    "openai/gpt-oss-120b": {
+      "label": "GPT-OSS 120B (Groq)",
+      "input_per_million": 0.15,
+      "output_per_million": 0.60,
+      "source": "https://console.groq.com/docs/model/openai/gpt-oss-120b",
+      "status": "Default Groq model. Cached input is $0.075 (not used here). It is a reasoning model: Groq's output token count includes its hidden reasoning tokens, so answers show more output tokens than words. The page does not say whether reasoning tokens are billed at the output price; this table assumes they are."
+    },
     "llama-3.3-70b-versatile": {
       "label": "Llama 3.3 70B (Groq)",
       "input_per_million": null,

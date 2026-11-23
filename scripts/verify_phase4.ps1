@@ -204,10 +204,11 @@ try {
         if ($script:Models.prices_checked_on -and $local.input_per_million_usd -eq 0 -and $local.output_per_million_usd -eq 0 -and $script:Models.fallback -eq 'local') { $true }
         else { "checked_on=$($script:Models.prices_checked_on), local=$($local.input_per_million_usd)/$($local.output_per_million_usd)" }
     }
-    Test-Check 'a model without a published price is marked unpriced, not free' {
-        $unpriced = @($script:Models.models | Where-Object { -not $_.priced })
-        if ($unpriced.Count -eq 0) { return 'SKIP:every model has a price in prices.json' }
-        if (@($unpriced | Where-Object { $null -ne $_.input_per_million_usd }).Count -eq 0) { $true } else { 'unpriced model shows a price' }
+    Test-Check 'every cloud model has a real price or is marked unpriced (never a made-up zero)' {
+        $bad = @($script:Models.models | Where-Object { -not $_.local } | Where-Object {
+            ($_.priced -and -not ($_.input_per_million_usd -gt 0 -and $_.output_per_million_usd -gt 0)) -or
+            (-not $_.priced -and ($null -ne $_.input_per_million_usd -or $null -ne $_.output_per_million_usd)) })
+        if ($bad.Count -eq 0) { $true } else { "inconsistent: $(@($bad | ForEach-Object { $_.model_id }) -join ', ')" }
     }
     Test-Check 'local model is pulled and ready' {
         $local = @($script:Models.models | Where-Object { $_.key -eq 'local' })[0]
@@ -298,11 +299,17 @@ try {
     }
 
     Write-Host "`n== Groq"
-    Test-Check 'Groq answer with real API (needs GROQ_API_KEY)' {
+    Test-Check 'Groq answer with the real API: cited, actual tokens, cost from prices.json' {
         $groq = @($script:Models.models | Where-Object { $_.key -eq 'groq' })[0]
         if (-not $groq.ready) { return 'SKIP:GROQ_API_KEY not set; Groq is checked against the fake API in Part B' }
         $run = Invoke-Run $QLab 'groq'
-        if ($run.Last.model -like 'groq:*' -and $run.Last.usage.output_tokens -gt 0) { $true } else { "model=$($run.Last.model), fallback=$($run.Last.fallback.code)" }
+        $l = $run.Last
+        if ($l.model -notlike 'groq:*') { return "answered by $($l.model), fallback=$($l.fallback.code): $($l.fallback.reason)" }
+        $expected = Get-ExpectedUsd 'groq' $l.usage.input_tokens $l.usage.output_tokens
+        if ($l.supported -ne $true) { return "not cited: $($l.answer)" }
+        if ($l.usage.estimated -ne $false -or -not (Test-Near $l.cost.usd $expected)) { return "usage=$($l.usage | ConvertTo-Json -Compress), cost $($l.cost.usd) expected $expected" }
+        Write-Host "        $($l.model): $($l.usage.input_tokens) in / $($l.usage.output_tokens) out, INR $($l.cost.inr) | $($l.answer)" -ForegroundColor DarkGray
+        $true
     }
 
     Write-Host "`n== Usage API"
@@ -376,13 +383,14 @@ try {
             $row.tokens_estimated -eq $true) { $true }
         else { "model=$($l.model), usage=$($l.usage | ConvertTo-Json -Compress), row estimated=$($row.tokens_estimated)" }
     }
-    Test-Check 'Groq answer (fake API): actual tokens; no published price -> no cost, logged as null' {
+    Test-Check 'Groq answer (fake API): actual tokens, cost from the Groq price, logged' {
         $run = Invoke-Run $QLab 'groq'
         $l = $run.Last
         $row = Get-LatestRow
-        if ($l.model -like 'groq:*' -and $l.usage.estimated -eq $false -and $l.cost.priced -eq $false -and $null -eq $l.cost.usd -and
-            $null -eq $row.cost_usd -and $row.model -like 'groq:*') { $true }
-        else { "model=$($l.model), cost=$($l.cost | ConvertTo-Json -Compress), row cost=$($row.cost_usd)" }
+        $expected = Get-ExpectedUsd 'groq' $l.usage.input_tokens $l.usage.output_tokens
+        $costOk = if ($null -eq $expected) { $null -eq $l.cost.usd -and $null -eq $row.cost_usd } else { (Test-Near $l.cost.usd $expected) -and (Test-Near $row.cost_usd $expected) }
+        if ($l.model -like 'groq:*' -and $l.usage.estimated -eq $false -and $costOk -and $row.model -like 'groq:*') { $true }
+        else { "model=$($l.model), cost=$($l.cost | ConvertTo-Json -Compress), expected $expected, row cost=$($row.cost_usd)" }
     }
     Test-Check 'Groq daily limit: not retried, fallback to local' {
         $run = Invoke-Run "$QLab FAULT_DAILY" 'groq'
