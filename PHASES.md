@@ -21,7 +21,7 @@ Never cut: cited answers, the model dropdown, cost on every answer, the Telugu a
 |---|---|---|
 | Document chunks are isolated between saved graphs, even when two graphs use the same source id | Phase 5 | Done: chunks are keyed by scope (`graph:<id>` or `inline`) + source id. |
 | Citations must support the actual claims, not just exist | Phase 5 | Done: every cited sentence must have its numbers in the cited chunk and be close to it in meaning (bge-m3, threshold 0.45 measured on the samples); others are removed. Limit: a sentence that is on-topic and has no numbers but says something the chunk does not can still pass. |
-| Canvas node highlighting is driven by the real `/pipeline/run` SSE events | Phase 6 | Event contract is stable: every stage event carries `node_id` and `status`. |
+| Canvas node highlighting is driven by the real `/pipeline/run` SSE events | Phase 6 | Done: node status comes only from the stream's stage events (by `node_id`); source highlights come from the agent's retrieval report and the result's citations. |
 
 ## Phase 5 evaluation findings (fixed)
 

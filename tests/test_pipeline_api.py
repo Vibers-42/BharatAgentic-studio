@@ -74,10 +74,10 @@ def test_run_rejects_invalid_graph_before_streaming(client, default_graph):
     assert detail["errors"][0]["code"] == "main_line_gap"
 
 
-def test_run_needs_exactly_one_graph_source(client, default_graph):
+def test_run_needs_a_graph(client, default_graph):
+    # Since Phase 6, graph + graph_id together is allowed (canvas graph, saved graph's documents);
+    # that case needs a database and is tested in test_sources_db.py.
     assert client.post("/pipeline/run", json={"question": "hi"}).status_code == 400
-    both = {"question": "hi", "graph": default_graph, "graph_id": 1}
-    assert client.post("/pipeline/run", json=both).status_code == 400
 
 
 def test_malformed_graph_is_422(client):

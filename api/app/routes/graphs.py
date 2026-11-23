@@ -18,7 +18,8 @@ class SaveRequest(BaseModel):
 
 
 def _to_json(graph: Graph) -> dict:
-    return graph.model_dump(by_alias=True)  # keeps the "from" key on edges
+    # by_alias keeps the "from" key on edges; exclude_none leaves out positions a graph does not have
+    return graph.model_dump(by_alias=True, exclude_none=True)
 
 
 def load_graph(graph_id: int) -> Graph:
@@ -40,6 +41,20 @@ def save_graph(req: SaveRequest):
             (req.name, Jsonb(_to_json(req.graph))),
         ).fetchone()
     return {"id": row[0], "name": req.name}
+
+
+@router.put("/{graph_id}")
+def update_graph(graph_id: int, req: SaveRequest):
+    """Save the canvas over an existing graph. Its documents stay with it (same id, same scope)."""
+    errors = validate_graph(req.graph)
+    if errors:
+        raise HTTPException(422, {"message": "The pipeline graph is not valid.", "errors": errors})
+    with get_conn() as conn:
+        row = conn.execute("UPDATE graphs SET name = %s, graph = %s, updated_at = now() WHERE id = %s RETURNING id",
+                           (req.name, Jsonb(_to_json(req.graph)), graph_id)).fetchone()
+    if row is None:
+        raise HTTPException(404, f"No saved graph with id {graph_id}.")
+    return {"id": graph_id, "name": req.name}
 
 
 @router.get("")

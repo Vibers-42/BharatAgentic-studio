@@ -172,3 +172,46 @@ def test_saved_graph_ingests_its_link_sources(client, full_graph, page_server):
     assert by["s1"]["ok"] and by["s1"]["scope"] == f"graph:{gid}" and by["s1"]["chunks"] >= 1
     assert by["s2"]["ok"] is False and "upload a PDF" in by["s2"]["error"]
     assert client.get(f"/sources/s1?graph_id={gid}").json()["chunks"] >= 1
+
+
+# ---------- Phase 6: the canvas ----------
+def test_canvas_graph_runs_against_its_saved_graph_documents(client, full_graph):
+    """The canvas sends its current (unsaved) graph plus the saved graph id: the edited graph runs,
+    and only that saved graph's documents are searched."""
+    gid = save_graph(client, full_graph, "canvas")
+    pdf = {"file": ("hostel-rules.pdf", make_pdf(HOSTEL_RULES), "application/pdf")}
+    assert client.post(f"/sources/s1/pdf?graph_id={gid}", files=pdf).status_code == 201
+    edited = client.get(f"/graphs/{gid}").json()
+    edited["nodes"][3]["config"]["language"] = "hi"  # an unsaved edit on the canvas
+    r = client.post("/pipeline/run?stream=false", json={"question": "hostel gate", "graph": edited, "graph_id": gid})
+    agent = next(e for e in r.json()["events"] if e.get("stage") == "agent" and e.get("status") == "done")
+    assert agent["detail"]["retrieval"]["scope"] == f"graph:{gid}"
+    assert {c["file"] for c in agent["detail"]["retrieval"]["candidates"]} == {"hostel-rules.pdf"}
+    assert r.json()["events"][-1]["language"] == "hi"  # the edited graph ran, not the saved one
+
+
+def test_run_with_unknown_graph_id_is_404(client, default_graph):
+    r = client.post("/pipeline/run?stream=false", json={"question": "hi", "graph": default_graph, "graph_id": 999999})
+    assert r.status_code == 404
+
+
+def test_update_saved_graph_keeps_id_documents_and_positions(client, full_graph):
+    gid = save_graph(client, full_graph, "layout")
+    g = client.get(f"/graphs/{gid}").json()
+    assert all("position" not in n for n in g["nodes"])  # graphs without positions stay as they were
+    for i, n in enumerate(g["nodes"]):
+        n["position"] = {"x": 100 * i, "y": 50}
+    r = client.put(f"/graphs/{gid}", json={"name": "layout v2", "graph": g})
+    assert r.status_code == 200 and r.json() == {"id": gid, "name": "layout v2"}
+    again = client.get(f"/graphs/{gid}").json()
+    assert [n["position"] for n in again["nodes"]] == [{"x": 100 * i, "y": 50} for i in range(len(g["nodes"]))]
+    assert next(x for x in client.get("/graphs").json() if x["id"] == gid)["name"] == "layout v2"
+
+
+def test_update_refuses_an_invalid_graph_and_unknown_id(client, full_graph):
+    gid = save_graph(client, full_graph, "strict")
+    g = client.get(f"/graphs/{gid}").json()
+    g["edges"] = [e for e in g["edges"] if e["from"] != "s1"]  # source no longer connected
+    r = client.put(f"/graphs/{gid}", json={"name": "broken", "graph": g})
+    assert r.status_code == 422 and r.json()["detail"]["errors"][0]["code"] == "not_connected"
+    assert client.put("/graphs/999999", json={"name": "x", "graph": full_graph}).status_code == 404

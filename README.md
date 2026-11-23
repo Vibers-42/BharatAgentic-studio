@@ -32,6 +32,7 @@ docker compose exec ollama ollama pull bge-m3
 ```bash
 pip install -r tests/requirements.txt -r api/requirements.txt
 pytest tests                      # config checks; db tests skip without TEST_DATABASE_URL
+cd web && npm test                # canvas model and SSE highlighting (Vitest)
 bash scripts/verify_phase1.sh     # checks the running Docker stack end to end (Linux/macOS/Git Bash)
 ```
 
@@ -44,6 +45,7 @@ powershell -ExecutionPolicy Bypass -File scripts\verify_phase3.ps1              
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase4.ps1                  # fallback and failure injection
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase5.ps1                  # connectors, isolation, claims
 powershell -ExecutionPolicy Bypass -File scripts\verify_models.ps1                  # 4 models, fallback chain, local-only
+powershell -ExecutionPolicy Bypass -File scripts\verify_phase6.ps1                  # builder, validation, SSE per node, dashboard
 ```
 
 ## Pipeline graph and API
@@ -172,6 +174,27 @@ Three connectors, all chunked, embedded with bge-m3 and stored per source node:
 - **Telugu and Hindi evaluation:** [eval/questions.json](eval/questions.json) has 12 questions in each
   language with the expected source; `python scripts/eval_languages.py` runs them on every model and
   writes [eval/RESULTS.md](eval/RESULTS.md).
+
+## Visual agent builder and usage dashboard (Phase 6)
+
+Open http://localhost:3000 — the **Builder** tab is a React Flow canvas:
+
+- The five fixed blocks (Input, Guardrails, Router, Agent, Output) are always there and cannot be deleted.
+- **Add** a PDF, Docs link, GitHub repo, Calculator or MCP tool from the palette, then **draw a line** from
+  it to the Agent. A source without a line is never searched.
+- Click a node to configure it: the Agent's model (Gemini, Groq GPT-OSS 120B, Qwen 3 14B, Qwen 2.5 3B),
+  answer language and **Local only**; Guardrails checks; a source's PDF upload, docs link or GitHub repo;
+  an MCP tool's server and read-only mode. Tools can be drawn now and run in Phase 7.
+- **Save / Load** keeps the graph and the layout (positions). Documents belong to the saved graph, so
+  save once before adding a source's content.
+- **Validate** and **Run** use the api's own validation; every problem is listed and marked on its node.
+- **Run** streams the real pipeline: each block turns yellow while running and green when done (red if
+  blocked or failed), the edges into the running block move, connected sources turn blue when searched
+  and cited, and the answer card shows citations, model, tokens, cost and time. The canvas graph runs
+  as drawn (unsaved edits included) against its saved graph's documents.
+
+The **Dashboard** tab shows total requests, tokens and estimated cost, bars per model and per user, a
+requests-per-day chart and the latest answers, for everyone or one user.
 
 ## Containers
 

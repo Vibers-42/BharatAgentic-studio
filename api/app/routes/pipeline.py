@@ -27,7 +27,8 @@ class RunRequest(BaseModel):
     question: str
     language: str | None = None   # "en", "te" or "hi"; None lets the input stage decide
     graph: Graph | None = None    # send the graph inline ...
-    graph_id: int | None = None   # ... or the id of a saved graph
+    graph_id: int | None = None   # ... or the id of a saved graph; with both, the inline graph runs (the
+                                  # canvas's unsaved edits) and graph_id says whose documents are searched
     model: str | None = None      # "gemini", "groq", "local" or "local_small"; None uses the agent node's setting
     user: str = "demo"            # whose usage this is (the user switcher)
     local_only: bool = False      # privacy: never call a cloud LLM API for this question, not even as fallback
@@ -55,9 +56,10 @@ def _sse(event: dict) -> str:
 
 @router.post("/run")
 def run(req: RunRequest, stream: bool = True):
-    if (req.graph is None) == (req.graph_id is None):
-        raise HTTPException(400, "Send exactly one of 'graph' or 'graph_id'.")
-    graph = req.graph if req.graph is not None else load_graph(req.graph_id)
+    if req.graph is None and req.graph_id is None:
+        raise HTTPException(400, "Send 'graph', 'graph_id', or both (the canvas graph run against a saved graph's documents).")
+    saved = load_graph(req.graph_id) if req.graph_id is not None else None  # 404 for an unknown id
+    graph = req.graph if req.graph is not None else saved
 
     # Validate before streaming, so a broken graph gets a normal 422 with every error listed.
     errors = validate_graph(graph)

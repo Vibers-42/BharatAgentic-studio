@@ -16,6 +16,8 @@ class Node(BaseModel):
     id: str
     type: str
     config: dict = Field(default_factory=dict)
+    # Where the canvas drew the node ({"x": .., "y": ..}). Optional and ignored by validation and the engine.
+    position: dict | None = None
 
 
 class Edge(BaseModel):
