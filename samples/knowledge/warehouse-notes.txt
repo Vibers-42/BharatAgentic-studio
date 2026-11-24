@@ -1,0 +1,5 @@
+Hyderabad warehouse operating notes (fictional sample)
+
+The Hyderabad warehouse ships orders until 6:30 PM every weekday.
+On Saturdays the last pickup is at 1 PM, and the warehouse is closed on Sundays.
+Fragile items are packed in double-walled boxes.

@@ -6,7 +6,7 @@ The account's personal workspace and its first project hold whatever the script 
 
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -19,6 +19,7 @@ class TestAccount:
     name: str
     org_id: int
     project_id: int
+    password: str = field(default="", repr=False)  # kept in memory only (to sign in again); never printed or saved
 
 
 def sign_up(api: str, label: str, timeout: float = 900) -> TestAccount:
@@ -32,7 +33,7 @@ def sign_up(api: str, label: str, timeout: float = 900) -> TestAccount:
     me = client.get("/auth/me").json()
     org_id = next(w["id"] for w in me["workspaces"] if w["kind"] == "personal")
     project_id = client.get("/projects", params={"org_id": org_id}).json()[0]["id"]
-    return TestAccount(client, me["user"]["id"], email, f"Verify {label}", org_id, project_id)
+    return TestAccount(client, me["user"]["id"], email, f"Verify {label}", org_id, project_id, password)
 
 
 def add_file(acct: TestAccount, path, name: str | None = None, project_id: int | None = None) -> int:
@@ -47,3 +48,12 @@ def add_link(acct: TestAccount, kind: str, url: str, project_id: int | None = No
     r = acct.client.post(f"/projects/{project_id or acct.project_id}/sources/{kind}", json={"url": url})
     r.raise_for_status()
     return r.json()["id"]
+
+
+def sign_in(api: str, acct: TestAccount, timeout: float = 900) -> httpx.Client:
+    """A brand-new client (no cookies) that signs in again with the account's password."""
+    client = httpx.Client(base_url=api, timeout=timeout)
+    r = client.post("/auth/login", json={"email": acct.email, "password": acct.password})
+    r.raise_for_status()
+    client.headers["X-CSRF-Token"] = r.json()["csrf_token"]
+    return client

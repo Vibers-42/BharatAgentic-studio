@@ -196,11 +196,12 @@ def run(req: RunRequest, stream: bool = True, user: User = Depends(current_user)
                     yield {"type": "error", "stage": "agent", "node_id": None, "code": "access_revoked",
                            "message": "Your access to this project was removed."}
                     return
+            if ev["type"] == "result" and project_access(user.id, project_id) is None:
+                # Always checked right before the final answer (with its citations) leaves, whatever the timer says.
+                yield {"type": "error", "stage": "output", "node_id": None, "code": "access_revoked",
+                       "message": "Your access to this project was removed."}
+                return
             if conversation and ev["type"] == "result":
-                if project_access(user.id, project_id) is None:
-                    yield {"type": "error", "stage": "output", "node_id": None, "code": "access_revoked",
-                           "message": "Your access to this project was removed."}
-                    return
                 _save_message(conversation["id"], "assistant", ev.get("answer") or "", req.request_id, "ok", ev)
             elif conversation and ev["type"] == "error":
                 _save_message(conversation["id"], "assistant", f"No answer: {ev.get('message')}", req.request_id, "error")

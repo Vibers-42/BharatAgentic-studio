@@ -68,6 +68,7 @@ pip install -r tests/requirements.txt -r api/requirements.txt
 pytest tests                      # unit tests; db tests skip without TEST_DATABASE_URL
 cd web && npm test                # canvas model, SSE highlighting, formatting (Vitest)
 python scripts/ui_journeys.py     # four people in four browser profiles (owner, contributor, consumer, outsider)
+python scripts/verify_phase8_sources.py  # all 8 source types shared by two employees, real Groq + Qwen 3 14B
 python scripts/model_matrix.py    # the same 9 questions on all 4 models, real providers (docs/results)
 python scripts/load_test.py       # controlled load test (docs/PERFORMANCE_BENCHMARKS.md)
 bash scripts/verify_phase1.sh     # checks the running Docker stack end to end (Linux/macOS/Git Bash)

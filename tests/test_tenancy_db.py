@@ -5,6 +5,7 @@ Models and embeddings are faked. Skipped unless TEST_DATABASE_URL is set."""
 
 import os
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -214,6 +215,7 @@ def test_role_escalation_is_refused(app):
     assert adm.patch(f"/orgs/{org}/members/{adm.id}", json={"role": "owner"}).status_code == 403
     assert adm.post(f"/orgs/{org}/invitations", json={"email": "x@example.test", "role": "admin"}).status_code == 403
     assert adm.delete(f"/orgs/{org}/members/{a.id}").status_code == 403
+    assert adm.patch(f"/orgs/{org}/members/{a.id}", json={"role": "member"}).status_code == 403  # nor demote the owner
     assert m.patch(f"/orgs/{org}/members/{m.id}", json={"role": "admin"}).status_code == 403
     assert m.delete(f"/orgs/{org}/members/{adm.id}").status_code == 403
     assert a.patch(f"/orgs/{org}/members/{a.id}", json={"role": "member"}).status_code == 409  # last owner
@@ -380,10 +382,85 @@ def test_removing_access_takes_effect_immediately(world, app):
     assert sql("SELECT count(*) FROM project_members WHERE user_id = %s", b.id)[0][0] == 0
 
 
+KNOWLEDGE = Path(__file__).resolve().parent.parent / "samples" / "knowledge"
+FILE_FACTS = {"warehouse-notes.txt": "6:30 PM every weekday", "support-runbook.md": "within 15 minutes",
+              "leave-policy.docx": "18 days of paid leave", "courier-partners.csv": "Max parcel weight (kg): 32",
+              "gift-cards.xlsx": "Validity (months): 9"}
+
+
+def test_every_file_type_is_extracted_chunked_embedded_stored_and_shared(world):
+    """TXT, Markdown, DOCX, CSV and XLSX (PDF is covered above): uploaded once by a contributor, read by a viewer."""
+    b, c, d, proj = world["b"], world["c"], world["d"], world["proj"]
+    for name, fact in FILE_FACTS.items():
+        data = (KNOWLEDGE / name).read_bytes()
+        r = b.add_pdf(proj, name, data)
+        assert r.status_code == 201, (name, r.text)
+        sid = r.json()["id"]
+        assert r.json()["status"] == "ready" and r.json()["chunk_count"] >= 1, name
+        stored = sql("SELECT count(*), count(embedding), string_agg(content, ' ') FROM chunks WHERE source_ref = %s", sid)[0]
+        assert stored[0] == stored[1] == r.json()["chunk_count"] and fact in stored[2], (name, stored[:2])
+        assert sid in [s["id"] for s in c.get(f"/projects/{proj}/sources").json()]          # the viewer sees it
+        got = c.get(f"/sources/{sid}/file")
+        assert got.status_code == 200 and got.content == data, name                         # same bytes back
+        assert d.get(f"/sources/{sid}").status_code == d.get(f"/sources/{sid}/file").status_code == 404
+
+
+def test_agents_reuse_project_chunks_without_embedding_again(world):
+    a, src, proj = world["a"], world["src"], world["proj"]
+    before = sql("SELECT array_agg(id ORDER BY id) FROM chunks WHERE source_ref = %s", src)[0][0]
+    for name in ("second agent", "third agent"):
+        assert a.post("/graphs", json={"project_id": proj, "name": name, "graph": agent_graph({"s1": src})}).status_code == 201
+    world["c"].ask(question="refund policy", graph_id=world["graph"])
+    world["c"].ask(question="refund policy", project_id=proj)
+    assert sql("SELECT array_agg(id ORDER BY id) FROM chunks WHERE source_ref = %s", src)[0][0] == before  # same rows
+    assert sql("SELECT count(*) FROM agent_sources WHERE source_id = %s", src)[0][0] == 3
+
+
+def _revoking_model(monkeypatch, world, tokens: int):
+    """A model that removes the viewer from the project after its first token, while the answer is streaming."""
+    from app.models import gemini
+
+    def stream(system, prompt, **kw):
+        yield {"text": "80 percent "}
+        sql("DELETE FROM project_members WHERE project_id = %s AND user_id = %s", world["proj"], world["c"].id)
+        for _ in range(tokens):
+            yield {"text": "of the test amount "}
+        yield {"text": "is refunded [1]."}
+        yield {"usage": {"input_tokens": 10, "output_tokens": 5}}
+    monkeypatch.setattr(gemini, "stream", stream)
+
+
+def test_access_removed_while_an_answer_streams_stops_it(world, monkeypatch):
+    from app.routes import pipeline
+    monkeypatch.setattr(pipeline, "RECHECK_SECONDS", 0.0)   # re-check on every event (normally every 2 s)
+    _revoking_model(monkeypatch, world, tokens=5)
+    c = world["c"]
+    conv = c.post("/conversations", json={"project_id": world["proj"], "graph_id": world["graph"]}).json()["id"]
+    try:
+        r, events = c.ask(question="How much is refunded for a lab test?", conversation_id=conv)
+        assert events[-1]["type"] == "error" and events[-1]["code"] == "access_revoked"
+        assert not any(e["type"] == "result" for e in events)
+        assert not sql("SELECT 1 FROM messages WHERE conversation_id = %s AND role = 'assistant' AND status = 'ok'", conv)
+    finally:
+        world["a"].put(f"/projects/{world['proj']}/members/{c.id}", json={"role": "viewer"})
+
+
+def test_final_answer_is_withheld_if_access_was_removed_during_the_run(world, monkeypatch):
+    """Even before the 2 s timer fires, the final result (answer and citations) is never sent after a removal."""
+    _revoking_model(monkeypatch, world, tokens=0)
+    try:
+        r, events = world["c"].ask(question="How much is refunded for a lab test?", graph_id=world["graph"])
+        assert events[-1]["code"] == "access_revoked" and not any(e["type"] == "result" for e in events)
+    finally:
+        world["a"].put(f"/projects/{world['proj']}/members/{world['c'].id}", json={"role": "viewer"})
+
+
 def test_project_chat_uses_every_ready_project_source(world):
     r, events = world["c"].ask(question="refund policy", project_id=world["proj"])
     agent = next(e for e in events if e.get("stage") == "agent" and e.get("status") == "done")
-    assert agent["detail"]["retrieval"]["searched"] == [f"source_{world['src']}"]
+    ready = sql("SELECT id FROM sources WHERE project_id = %s AND status = 'ready' ORDER BY id", world["proj"])
+    assert sorted(agent["detail"]["retrieval"]["searched"]) == sorted(f"source_{r[0]}" for r in ready)
+    assert f"source_{world['src']}" in agent["detail"]["retrieval"]["searched"]
 
 
 def test_a_source_interrupted_by_a_restart_is_marked_failed_not_left_processing(app):

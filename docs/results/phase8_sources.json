@@ -1,0 +1,1113 @@
+{
+ "run": "2026-11-24 14:55:18",
+ "results": [
+  {
+   "status": "PASS",
+   "check": "company, project and two confirmed employees (A contributor, B viewer)",
+   "detail": "org 134, project 169"
+  },
+  {
+   "status": "PASS",
+   "check": "employee A adds s_pdf (file: ecommerce-architecture.pdf)",
+   "detail": "source #196 ecommerce-architecture.pdf, 2 chunks"
+  },
+  {
+   "status": "PASS",
+   "check": "employee A adds s_repo (repo: https://github.com/octocat/Spoon-Knife)",
+   "detail": "source #197 octocat/Spoon-Knife@d0dd1f6, 5 chunks"
+  },
+  {
+   "status": "PASS",
+   "check": "employee A adds s_url (url: https://example.com)",
+   "detail": "source #198 Example Domain, 1 chunks"
+  },
+  {
+   "status": "PASS",
+   "check": "employee A adds s_txt (file: warehouse-notes.txt)",
+   "detail": "source #199 warehouse-notes.txt, 1 chunks"
+  },
+  {
+   "status": "PASS",
+   "check": "employee A adds s_md (file: support-runbook.md)",
+   "detail": "source #200 support-runbook.md, 1 chunks"
+  },
+  {
+   "status": "PASS",
+   "check": "employee A adds s_docx (file: leave-policy.docx)",
+   "detail": "source #201 leave-policy.docx, 1 chunks"
+  },
+  {
+   "status": "PASS",
+   "check": "employee A adds s_csv (file: courier-partners.csv)",
+   "detail": "source #202 courier-partners.csv, 1 chunks"
+  },
+  {
+   "status": "PASS",
+   "check": "employee A adds s_xlsx (file: gift-cards.xlsx)",
+   "detail": "source #203 gift-cards.xlsx, 1 chunks"
+  },
+  {
+   "status": "PASS",
+   "check": "s_pdf: extracted, chunked, embedded and stored in PostgreSQL",
+   "detail": "source #196: 2 chunks, 2 vectors of 1024 dims, fact in text: True"
+  },
+  {
+   "status": "PASS",
+   "check": "s_repo: extracted, chunked, embedded and stored in PostgreSQL",
+   "detail": "source #197: 5 chunks, 5 vectors of 1024 dims, fact in text: True"
+  },
+  {
+   "status": "PASS",
+   "check": "s_url: extracted, chunked, embedded and stored in PostgreSQL",
+   "detail": "source #198: 1 chunks, 1 vectors of 1024 dims, fact in text: True"
+  },
+  {
+   "status": "PASS",
+   "check": "s_txt: extracted, chunked, embedded and stored in PostgreSQL",
+   "detail": "source #199: 1 chunks, 1 vectors of 1024 dims, fact in text: True"
+  },
+  {
+   "status": "PASS",
+   "check": "s_md: extracted, chunked, embedded and stored in PostgreSQL",
+   "detail": "source #200: 1 chunks, 1 vectors of 1024 dims, fact in text: True"
+  },
+  {
+   "status": "PASS",
+   "check": "s_docx: extracted, chunked, embedded and stored in PostgreSQL",
+   "detail": "source #201: 1 chunks, 1 vectors of 1024 dims, fact in text: True"
+  },
+  {
+   "status": "PASS",
+   "check": "s_csv: extracted, chunked, embedded and stored in PostgreSQL",
+   "detail": "source #202: 1 chunks, 1 vectors of 1024 dims, fact in text: True"
+  },
+  {
+   "status": "PASS",
+   "check": "s_xlsx: extracted, chunked, embedded and stored in PostgreSQL",
+   "detail": "source #203: 1 chunks, 1 vectors of 1024 dims, fact in text: True"
+  },
+  {
+   "status": "PASS",
+   "check": "owner saves one shared agent using all eight project sources (no new sources)",
+   "detail": "agent #107, project sources 8"
+  },
+  {
+   "status": "PASS",
+   "check": "employee B lists the same eight sources (ids match) and cannot upload (viewer)",
+   "detail": "B sees [196, 197, 198, 199, 200, 201, 202, 203]"
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_pdf via project chat on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 0.8s cites ['ecommerce-architecture.pdf']: Delivery is free for orders above Rs. 499 [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_repo via project chat on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 1.2s cites ['README.md']: The Spoon‑Knife repository is provided as a practice project for users to fork, make changes, and submit a Pul"
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_url via project chat on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 1.1s cites ['Example Domain']: The example.com domain is intended for use in documentation examples without needing permission [1]. It is not"
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_txt via project chat on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 1.5s cites ['warehouse-notes.txt']: The Hyderabad warehouse ships orders until 6:30 PM on weekdays [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_md via project chat on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 1.1s cites ['support-runbook.md']: A priority‑1 support ticket must receive its first response within 15 minutes [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_docx via project chat on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 0.9s cites ['leave-policy.docx']: Employees get 18 days of paid leave each year [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_csv via project chat on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 0.8s cites ['courier-partners.csv']: The maximum parcel weight that SwiftShip carries is 32 kg [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_xlsx via project chat on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 1.8s cites ['gift-cards.xlsx']: The Festive gift card is valid for 9 months [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_pdf via project chat on local: correct and cited",
+   "detail": "local:qwen3:14b 31.6s cites ['ecommerce-architecture.pdf']: Delivery is free for orders above Rs. 499 [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_repo via project chat on local: correct and cited",
+   "detail": "local:qwen3:14b 10.0s cites ['README.md']: The Spoon-Knife repository is meant for practicing how to fork a repository and submit a Pull Request [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_url via project chat on local: correct and cited",
+   "detail": "local:qwen3:14b 4.3s cites ['Example Domain']: The example.com domain is for use in documentation examples without needing permission [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_txt via project chat on local: correct and cited",
+   "detail": "local:qwen3:14b 4.4s cites ['warehouse-notes.txt']: The Hyderabad warehouse ships orders until 6:30 PM every weekday [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_md via project chat on local: correct and cited",
+   "detail": "local:qwen3:14b 4.3s cites ['support-runbook.md']: A priority-1 support ticket must get a first response within 15 minutes [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_docx via project chat on local: correct and cited",
+   "detail": "local:qwen3:14b 3.4s cites ['leave-policy.docx']: Employees get 18 days of paid leave each year [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_csv via project chat on local: correct and cited",
+   "detail": "local:qwen3:14b 4.5s cites ['courier-partners.csv']: The maximum parcel weight that the courier SwiftShip carries is 32 kg [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_xlsx via project chat on local: correct and cited",
+   "detail": "local:qwen3:14b 3.3s cites ['gift-cards.xlsx']: The Festive gift card is valid for 9 months [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_pdf via agent on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 1.3s cites ['ecommerce-architecture.pdf']: Delivery is free for orders above Rs. 499 [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_repo via agent on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 2.1s cites ['README.md']: The Spoon‑Knife repository is provided as a practice project for learning how to fork a repository, make chang"
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_url via agent on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 1.2s cites ['Example Domain']: The example.com domain is intended for use in documentation examples without needing permission [1]. It is not"
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_txt via agent on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 1.0s cites ['warehouse-notes.txt']: The Hyderabad warehouse ships orders until 6:30 PM every weekday [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_md via agent on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 0.9s cites ['support-runbook.md']: A priority‑1 support ticket must receive its first response within 15 minutes [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_docx via agent on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 0.7s cites ['leave-policy.docx']: Employees get 18 days of paid leave each year [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_csv via agent on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 0.9s cites ['courier-partners.csv']: The maximum parcel weight that SwiftShip carries is 32 kg [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_xlsx via agent on groq: correct and cited",
+   "detail": "groq:openai/gpt-oss-120b 0.8s cites ['gift-cards.xlsx']: The Festive gift card is valid for 9 months [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_pdf via agent on local: correct and cited",
+   "detail": "local:qwen3:14b 3.0s cites ['ecommerce-architecture.pdf']: Delivery is free for orders above Rs. 499 [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_repo via agent on local: correct and cited",
+   "detail": "local:qwen3:14b 9.9s cites ['README.md', 'index.html']: The Spoon-Knife repository is meant for practicing how to fork a repository and submit a Pull Request [1]. For"
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_url via agent on local: correct and cited",
+   "detail": "local:qwen3:14b 3.5s cites ['Example Domain']: The example.com domain is for use in documentation examples without needing permission [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_txt via agent on local: correct and cited",
+   "detail": "local:qwen3:14b 3.7s cites ['warehouse-notes.txt']: The Hyderabad warehouse ships orders until 6:30 PM every weekday [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_md via agent on local: correct and cited",
+   "detail": "local:qwen3:14b 3.5s cites ['support-runbook.md']: A priority-1 support ticket must get a first response within 15 minutes [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_docx via agent on local: correct and cited",
+   "detail": "local:qwen3:14b 2.9s cites ['leave-policy.docx']: Employees get 18 days of paid leave each year [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_csv via agent on local: correct and cited",
+   "detail": "local:qwen3:14b 4.1s cites ['courier-partners.csv']: The maximum parcel weight that the courier SwiftShip carries is 32 kg [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "B asks s_xlsx via agent on local: correct and cited",
+   "detail": "local:qwen3:14b 3.3s cites ['gift-cards.xlsx']: The Festive gift card is valid for 9 months [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "s_pdf: employee B downloads the original file (same SHA-256)",
+   "detail": "attachment; filename=\"ecommerce-architecture.pdf\""
+  },
+  {
+   "status": "PASS",
+   "check": "s_txt: employee B downloads the original file (same SHA-256)",
+   "detail": "attachment; filename=\"warehouse-notes.txt\""
+  },
+  {
+   "status": "PASS",
+   "check": "s_md: employee B downloads the original file (same SHA-256)",
+   "detail": "attachment; filename=\"support-runbook.md\""
+  },
+  {
+   "status": "PASS",
+   "check": "s_docx: employee B downloads the original file (same SHA-256)",
+   "detail": "attachment; filename=\"leave-policy.docx\""
+  },
+  {
+   "status": "PASS",
+   "check": "s_csv: employee B downloads the original file (same SHA-256)",
+   "detail": "attachment; filename=\"courier-partners.csv\""
+  },
+  {
+   "status": "PASS",
+   "check": "s_xlsx: employee B downloads the original file (same SHA-256)",
+   "detail": "attachment; filename=\"gift-cards.xlsx\""
+  },
+  {
+   "status": "PASS",
+   "check": "outsider: every source, file, listing, agent and run is refused (404)",
+   "detail": "{\"sources\": {\"s_pdf\": [404, 404], \"s_repo\": [404, 404], \"s_url\": [404, 404], \"s_txt\": [404, 404], \"s_md\": [404, 404], \"s_docx\": [404, 404], \"s_csv\": [404, 404], \"s_xlsx\": [404, 404]}, \"other\": [404, 404, 404, 404]}"
+  },
+  {
+   "status": "PASS",
+   "check": "no chunk was added, removed or re-embedded by sharing, the agent or 32 questions (same chunk ids)",
+   "detail": ""
+  },
+  {
+   "status": "PASS",
+   "check": "B removed from the project while an answer streams: the stream ends with access_revoked, no result",
+   "detail": "tokens before removal: 7, last event error access_revoked"
+  },
+  {
+   "status": "PASS",
+   "check": "after removal (still signed in): listing, file, agent run and project chat are refused",
+   "detail": "[404, 404, 404, 404]"
+  },
+  {
+   "status": "PASS",
+   "check": "an answer abandoned mid-stream is not stored as a completed answer (and generation stops)",
+   "detail": "messages [('user', 'ok')], usage rows added 0"
+  },
+  {
+   "status": "PASS",
+   "check": "after a full stack restart B signs in again: same 8 sources, same chunks, the conversation is still there",
+   "detail": "sources 8, chunks same: True, conversation messages 2"
+  },
+  {
+   "status": "PASS",
+   "check": "after restart: s_pdf still answers correctly with its citation (Groq, project chat)",
+   "detail": "Delivery is free for orders above Rs. 499 [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "after restart: s_repo still answers correctly with its citation (Groq, project chat)",
+   "detail": "The Spoon‑Knife repository is provided as a practice project where you can fork the repo, make changes, and su"
+  },
+  {
+   "status": "PASS",
+   "check": "after restart: s_url still answers correctly with its citation (Groq, project chat)",
+   "detail": "The example.com domain is for use in documentation examples without needing permission [1]. It is not a servic"
+  },
+  {
+   "status": "PASS",
+   "check": "after restart: s_txt still answers correctly with its citation (Groq, project chat)",
+   "detail": "The Hyderabad warehouse ships orders until 6:30 PM every weekday [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "after restart: s_md still answers correctly with its citation (Groq, project chat)",
+   "detail": "A priority‑1 support ticket must receive its first response within 15 minutes [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "after restart: s_docx still answers correctly with its citation (Groq, project chat)",
+   "detail": "Employees get 18 days of paid leave each year [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "after restart: s_csv still answers correctly with its citation (Groq, project chat)",
+   "detail": "The courier SwiftShip carries a maximum parcel weight of 32 kg [1]."
+  },
+  {
+   "status": "PASS",
+   "check": "after restart: s_xlsx still answers correctly with its citation (Groq, project chat)",
+   "detail": "The Festive gift card is valid for 9 months [1]."
+  }
+ ],
+ "evidence": {
+  "sources": {
+   "s_pdf": {
+    "source_id": 196,
+    "chunks": 2,
+    "embeddings": 2,
+    "dims": 1024,
+    "fact_in_chunks": true,
+    "status/chunk_count/uploader": "ready/2/Verify src-employee-a",
+    "download": {
+     "status": 200,
+     "same_bytes": true,
+     "content_disposition": "attachment; filename=\"ecommerce-architecture.pdf\""
+    }
+   },
+   "s_repo": {
+    "source_id": 197,
+    "chunks": 5,
+    "embeddings": 5,
+    "dims": 1024,
+    "fact_in_chunks": true,
+    "status/chunk_count/uploader": "ready/5/Verify src-employee-a"
+   },
+   "s_url": {
+    "source_id": 198,
+    "chunks": 1,
+    "embeddings": 1,
+    "dims": 1024,
+    "fact_in_chunks": true,
+    "status/chunk_count/uploader": "ready/1/Verify src-employee-a"
+   },
+   "s_txt": {
+    "source_id": 199,
+    "chunks": 1,
+    "embeddings": 1,
+    "dims": 1024,
+    "fact_in_chunks": true,
+    "status/chunk_count/uploader": "ready/1/Verify src-employee-a",
+    "download": {
+     "status": 200,
+     "same_bytes": true,
+     "content_disposition": "attachment; filename=\"warehouse-notes.txt\""
+    }
+   },
+   "s_md": {
+    "source_id": 200,
+    "chunks": 1,
+    "embeddings": 1,
+    "dims": 1024,
+    "fact_in_chunks": true,
+    "status/chunk_count/uploader": "ready/1/Verify src-employee-a",
+    "download": {
+     "status": 200,
+     "same_bytes": true,
+     "content_disposition": "attachment; filename=\"support-runbook.md\""
+    }
+   },
+   "s_docx": {
+    "source_id": 201,
+    "chunks": 1,
+    "embeddings": 1,
+    "dims": 1024,
+    "fact_in_chunks": true,
+    "status/chunk_count/uploader": "ready/1/Verify src-employee-a",
+    "download": {
+     "status": 200,
+     "same_bytes": true,
+     "content_disposition": "attachment; filename=\"leave-policy.docx\""
+    }
+   },
+   "s_csv": {
+    "source_id": 202,
+    "chunks": 1,
+    "embeddings": 1,
+    "dims": 1024,
+    "fact_in_chunks": true,
+    "status/chunk_count/uploader": "ready/1/Verify src-employee-a",
+    "download": {
+     "status": 200,
+     "same_bytes": true,
+     "content_disposition": "attachment; filename=\"courier-partners.csv\""
+    }
+   },
+   "s_xlsx": {
+    "source_id": 203,
+    "chunks": 1,
+    "embeddings": 1,
+    "dims": 1024,
+    "fact_in_chunks": true,
+    "status/chunk_count/uploader": "ready/1/Verify src-employee-a",
+    "download": {
+     "status": 200,
+     "same_bytes": true,
+     "content_disposition": "attachment; filename=\"gift-cards.xlsx\""
+    }
+   }
+  },
+  "answers": [
+   {
+    "source": "s_pdf",
+    "source_id": 196,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "Above what order value is delivery free?",
+    "expected": "499",
+    "answer": "Delivery is free for orders above Rs. 499 [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "ecommerce-architecture.pdf"
+    ],
+    "seconds": 0.8,
+    "ok": true
+   },
+   {
+    "source": "s_repo",
+    "source_id": 197,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "What is the Spoon-Knife repository meant for?",
+    "expected": "(?i)fork|pull request",
+    "answer": "The Spoon‑Knife repository is provided as a practice project for users to fork, make changes, and submit a Pull Request to learn how to fork a repository [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "README.md"
+    ],
+    "seconds": 1.2,
+    "ok": true
+   },
+   {
+    "source": "s_url",
+    "source_id": 198,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "What is the example.com domain for?",
+    "expected": "(?i)example|illustrat|documentation",
+    "answer": "The example.com domain is intended for use in documentation examples without needing permission [1]. It is not a service and should not be relied upon for testing or monitoring purposes [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "Example Domain"
+    ],
+    "seconds": 1.1,
+    "ok": true
+   },
+   {
+    "source": "s_txt",
+    "source_id": 199,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "Until what time does the Hyderabad warehouse ship orders on weekdays?",
+    "expected": "6:30",
+    "answer": "The Hyderabad warehouse ships orders until 6:30 PM on weekdays [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "warehouse-notes.txt"
+    ],
+    "seconds": 1.5,
+    "ok": true
+   },
+   {
+    "source": "s_md",
+    "source_id": 200,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "Within how many minutes must a priority-1 support ticket get a first response?",
+    "expected": "\\b15\\b",
+    "answer": "A priority‑1 support ticket must receive its first response within 15 minutes [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "support-runbook.md"
+    ],
+    "seconds": 1.1,
+    "ok": true
+   },
+   {
+    "source": "s_docx",
+    "source_id": 201,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "How many days of paid leave do employees get each year?",
+    "expected": "\\b18\\b",
+    "answer": "Employees get 18 days of paid leave each year [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "leave-policy.docx"
+    ],
+    "seconds": 0.9,
+    "ok": true
+   },
+   {
+    "source": "s_csv",
+    "source_id": 202,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "What is the maximum parcel weight that the courier SwiftShip carries?",
+    "expected": "\\b32\\b",
+    "answer": "The maximum parcel weight that SwiftShip carries is 32 kg [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "courier-partners.csv"
+    ],
+    "seconds": 0.8,
+    "ok": true
+   },
+   {
+    "source": "s_xlsx",
+    "source_id": 203,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "For how many months is the Festive gift card valid?",
+    "expected": "\\b9\\b",
+    "answer": "The Festive gift card is valid for 9 months [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "gift-cards.xlsx"
+    ],
+    "seconds": 1.8,
+    "ok": true
+   },
+   {
+    "source": "s_pdf",
+    "source_id": 196,
+    "mode": "project chat",
+    "model": "local",
+    "question": "Above what order value is delivery free?",
+    "expected": "499",
+    "answer": "Delivery is free for orders above Rs. 499 [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "ecommerce-architecture.pdf"
+    ],
+    "seconds": 31.6,
+    "ok": true
+   },
+   {
+    "source": "s_repo",
+    "source_id": 197,
+    "mode": "project chat",
+    "model": "local",
+    "question": "What is the Spoon-Knife repository meant for?",
+    "expected": "(?i)fork|pull request",
+    "answer": "The Spoon-Knife repository is meant for practicing how to fork a repository and submit a Pull Request [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "README.md"
+    ],
+    "seconds": 10.0,
+    "ok": true
+   },
+   {
+    "source": "s_url",
+    "source_id": 198,
+    "mode": "project chat",
+    "model": "local",
+    "question": "What is the example.com domain for?",
+    "expected": "(?i)example|illustrat|documentation",
+    "answer": "The example.com domain is for use in documentation examples without needing permission [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "Example Domain"
+    ],
+    "seconds": 4.3,
+    "ok": true
+   },
+   {
+    "source": "s_txt",
+    "source_id": 199,
+    "mode": "project chat",
+    "model": "local",
+    "question": "Until what time does the Hyderabad warehouse ship orders on weekdays?",
+    "expected": "6:30",
+    "answer": "The Hyderabad warehouse ships orders until 6:30 PM every weekday [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "warehouse-notes.txt"
+    ],
+    "seconds": 4.4,
+    "ok": true
+   },
+   {
+    "source": "s_md",
+    "source_id": 200,
+    "mode": "project chat",
+    "model": "local",
+    "question": "Within how many minutes must a priority-1 support ticket get a first response?",
+    "expected": "\\b15\\b",
+    "answer": "A priority-1 support ticket must get a first response within 15 minutes [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "support-runbook.md"
+    ],
+    "seconds": 4.3,
+    "ok": true
+   },
+   {
+    "source": "s_docx",
+    "source_id": 201,
+    "mode": "project chat",
+    "model": "local",
+    "question": "How many days of paid leave do employees get each year?",
+    "expected": "\\b18\\b",
+    "answer": "Employees get 18 days of paid leave each year [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "leave-policy.docx"
+    ],
+    "seconds": 3.4,
+    "ok": true
+   },
+   {
+    "source": "s_csv",
+    "source_id": 202,
+    "mode": "project chat",
+    "model": "local",
+    "question": "What is the maximum parcel weight that the courier SwiftShip carries?",
+    "expected": "\\b32\\b",
+    "answer": "The maximum parcel weight that the courier SwiftShip carries is 32 kg [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "courier-partners.csv"
+    ],
+    "seconds": 4.5,
+    "ok": true
+   },
+   {
+    "source": "s_xlsx",
+    "source_id": 203,
+    "mode": "project chat",
+    "model": "local",
+    "question": "For how many months is the Festive gift card valid?",
+    "expected": "\\b9\\b",
+    "answer": "The Festive gift card is valid for 9 months [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "gift-cards.xlsx"
+    ],
+    "seconds": 3.3,
+    "ok": true
+   },
+   {
+    "source": "s_pdf",
+    "source_id": 196,
+    "mode": "agent",
+    "model": "groq",
+    "question": "Above what order value is delivery free?",
+    "expected": "499",
+    "answer": "Delivery is free for orders above Rs. 499 [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "ecommerce-architecture.pdf"
+    ],
+    "seconds": 1.3,
+    "ok": true
+   },
+   {
+    "source": "s_repo",
+    "source_id": 197,
+    "mode": "agent",
+    "model": "groq",
+    "question": "What is the Spoon-Knife repository meant for?",
+    "expected": "(?i)fork|pull request",
+    "answer": "The Spoon‑Knife repository is provided as a practice project for learning how to fork a repository, make changes, and submit a Pull Request [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "README.md"
+    ],
+    "seconds": 2.1,
+    "ok": true
+   },
+   {
+    "source": "s_url",
+    "source_id": 198,
+    "mode": "agent",
+    "model": "groq",
+    "question": "What is the example.com domain for?",
+    "expected": "(?i)example|illustrat|documentation",
+    "answer": "The example.com domain is intended for use in documentation examples without needing permission [1]. It is not a service and should not be relied on for testing or monitoring purposes [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "Example Domain"
+    ],
+    "seconds": 1.2,
+    "ok": true
+   },
+   {
+    "source": "s_txt",
+    "source_id": 199,
+    "mode": "agent",
+    "model": "groq",
+    "question": "Until what time does the Hyderabad warehouse ship orders on weekdays?",
+    "expected": "6:30",
+    "answer": "The Hyderabad warehouse ships orders until 6:30 PM every weekday [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "warehouse-notes.txt"
+    ],
+    "seconds": 1.0,
+    "ok": true
+   },
+   {
+    "source": "s_md",
+    "source_id": 200,
+    "mode": "agent",
+    "model": "groq",
+    "question": "Within how many minutes must a priority-1 support ticket get a first response?",
+    "expected": "\\b15\\b",
+    "answer": "A priority‑1 support ticket must receive its first response within 15 minutes [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "support-runbook.md"
+    ],
+    "seconds": 0.9,
+    "ok": true
+   },
+   {
+    "source": "s_docx",
+    "source_id": 201,
+    "mode": "agent",
+    "model": "groq",
+    "question": "How many days of paid leave do employees get each year?",
+    "expected": "\\b18\\b",
+    "answer": "Employees get 18 days of paid leave each year [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "leave-policy.docx"
+    ],
+    "seconds": 0.7,
+    "ok": true
+   },
+   {
+    "source": "s_csv",
+    "source_id": 202,
+    "mode": "agent",
+    "model": "groq",
+    "question": "What is the maximum parcel weight that the courier SwiftShip carries?",
+    "expected": "\\b32\\b",
+    "answer": "The maximum parcel weight that SwiftShip carries is 32 kg [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "courier-partners.csv"
+    ],
+    "seconds": 0.9,
+    "ok": true
+   },
+   {
+    "source": "s_xlsx",
+    "source_id": 203,
+    "mode": "agent",
+    "model": "groq",
+    "question": "For how many months is the Festive gift card valid?",
+    "expected": "\\b9\\b",
+    "answer": "The Festive gift card is valid for 9 months [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "gift-cards.xlsx"
+    ],
+    "seconds": 0.8,
+    "ok": true
+   },
+   {
+    "source": "s_pdf",
+    "source_id": 196,
+    "mode": "agent",
+    "model": "local",
+    "question": "Above what order value is delivery free?",
+    "expected": "499",
+    "answer": "Delivery is free for orders above Rs. 499 [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "ecommerce-architecture.pdf"
+    ],
+    "seconds": 3.0,
+    "ok": true
+   },
+   {
+    "source": "s_repo",
+    "source_id": 197,
+    "mode": "agent",
+    "model": "local",
+    "question": "What is the Spoon-Knife repository meant for?",
+    "expected": "(?i)fork|pull request",
+    "answer": "The Spoon-Knife repository is meant for practicing how to fork a repository and submit a Pull Request [1]. Fork you, @octocat!\" [2].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "README.md",
+     "index.html"
+    ],
+    "seconds": 9.9,
+    "ok": true
+   },
+   {
+    "source": "s_url",
+    "source_id": 198,
+    "mode": "agent",
+    "model": "local",
+    "question": "What is the example.com domain for?",
+    "expected": "(?i)example|illustrat|documentation",
+    "answer": "The example.com domain is for use in documentation examples without needing permission [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "Example Domain"
+    ],
+    "seconds": 3.5,
+    "ok": true
+   },
+   {
+    "source": "s_txt",
+    "source_id": 199,
+    "mode": "agent",
+    "model": "local",
+    "question": "Until what time does the Hyderabad warehouse ship orders on weekdays?",
+    "expected": "6:30",
+    "answer": "The Hyderabad warehouse ships orders until 6:30 PM every weekday [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "warehouse-notes.txt"
+    ],
+    "seconds": 3.7,
+    "ok": true
+   },
+   {
+    "source": "s_md",
+    "source_id": 200,
+    "mode": "agent",
+    "model": "local",
+    "question": "Within how many minutes must a priority-1 support ticket get a first response?",
+    "expected": "\\b15\\b",
+    "answer": "A priority-1 support ticket must get a first response within 15 minutes [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "support-runbook.md"
+    ],
+    "seconds": 3.5,
+    "ok": true
+   },
+   {
+    "source": "s_docx",
+    "source_id": 201,
+    "mode": "agent",
+    "model": "local",
+    "question": "How many days of paid leave do employees get each year?",
+    "expected": "\\b18\\b",
+    "answer": "Employees get 18 days of paid leave each year [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "leave-policy.docx"
+    ],
+    "seconds": 2.9,
+    "ok": true
+   },
+   {
+    "source": "s_csv",
+    "source_id": 202,
+    "mode": "agent",
+    "model": "local",
+    "question": "What is the maximum parcel weight that the courier SwiftShip carries?",
+    "expected": "\\b32\\b",
+    "answer": "The maximum parcel weight that the courier SwiftShip carries is 32 kg [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "courier-partners.csv"
+    ],
+    "seconds": 4.1,
+    "ok": true
+   },
+   {
+    "source": "s_xlsx",
+    "source_id": 203,
+    "mode": "agent",
+    "model": "local",
+    "question": "For how many months is the Festive gift card valid?",
+    "expected": "\\b9\\b",
+    "answer": "The Festive gift card is valid for 9 months [1].",
+    "answered_by": "local:qwen3:14b",
+    "supported": true,
+    "cited_files": [
+     "gift-cards.xlsx"
+    ],
+    "seconds": 3.3,
+    "ok": true
+   },
+   {
+    "source": "s_pdf",
+    "source_id": 196,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "Above what order value is delivery free?",
+    "expected": "499",
+    "answer": "Delivery is free for orders above Rs. 499 [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "ecommerce-architecture.pdf"
+    ],
+    "seconds": 7.3,
+    "ok": true
+   },
+   {
+    "source": "s_repo",
+    "source_id": 197,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "What is the Spoon-Knife repository meant for?",
+    "expected": "(?i)fork|pull request",
+    "answer": "The Spoon‑Knife repository is provided as a practice project where you can fork the repo, make changes, and submit a Pull Request to learn how to fork and contribute [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "README.md"
+    ],
+    "seconds": 1.6,
+    "ok": true
+   },
+   {
+    "source": "s_url",
+    "source_id": 198,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "What is the example.com domain for?",
+    "expected": "(?i)example|illustrat|documentation",
+    "answer": "The example.com domain is for use in documentation examples without needing permission [1]. It is not a service and should not be relied on for testing and monitoring purposes [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "Example Domain"
+    ],
+    "seconds": 2.0,
+    "ok": true
+   },
+   {
+    "source": "s_txt",
+    "source_id": 199,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "Until what time does the Hyderabad warehouse ship orders on weekdays?",
+    "expected": "6:30",
+    "answer": "The Hyderabad warehouse ships orders until 6:30 PM every weekday [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "warehouse-notes.txt"
+    ],
+    "seconds": 0.8,
+    "ok": true
+   },
+   {
+    "source": "s_md",
+    "source_id": 200,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "Within how many minutes must a priority-1 support ticket get a first response?",
+    "expected": "\\b15\\b",
+    "answer": "A priority‑1 support ticket must receive its first response within 15 minutes [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "support-runbook.md"
+    ],
+    "seconds": 0.7,
+    "ok": true
+   },
+   {
+    "source": "s_docx",
+    "source_id": 201,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "How many days of paid leave do employees get each year?",
+    "expected": "\\b18\\b",
+    "answer": "Employees get 18 days of paid leave each year [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "leave-policy.docx"
+    ],
+    "seconds": 0.7,
+    "ok": true
+   },
+   {
+    "source": "s_csv",
+    "source_id": 202,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "What is the maximum parcel weight that the courier SwiftShip carries?",
+    "expected": "\\b32\\b",
+    "answer": "The courier SwiftShip carries a maximum parcel weight of 32 kg [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "courier-partners.csv"
+    ],
+    "seconds": 0.8,
+    "ok": true
+   },
+   {
+    "source": "s_xlsx",
+    "source_id": 203,
+    "mode": "project chat",
+    "model": "groq",
+    "question": "For how many months is the Festive gift card valid?",
+    "expected": "\\b9\\b",
+    "answer": "The Festive gift card is valid for 9 months [1].",
+    "answered_by": "groq:openai/gpt-oss-120b",
+    "supported": true,
+    "cited_files": [
+     "gift-cards.xlsx"
+    ],
+    "seconds": 0.8,
+    "ok": true
+   }
+  ],
+  "restart": {
+   "s_pdf": true,
+   "s_repo": true,
+   "s_url": true,
+   "s_txt": true,
+   "s_md": true,
+   "s_docx": true,
+   "s_csv": true,
+   "s_xlsx": true
+  },
+  "org": 134,
+  "project": 169
+ }
+}

@@ -322,13 +322,15 @@ try {
     $script:Secret = (Call $A 'POST' '/projects' @{ org_id = $script:Org; name = 'Confidential'; local_only = $true }).Json.id
     $secretPdf = Add-ProjectFile $A 'samples\ecommerce-architecture.pdf' $script:Secret
     $calc = @{ id = 't1'; type = 'tool_calculator'; config = @{} }
-    $script:SecretAgent = Save-Agent $A 'Confidential agent' (New-AgentGraph -Model 'groq' -Sources @{ s1 = $secretPdf } -Extra @($calc)) $script:Secret
+    $mcp = @{ id = 't2'; type = 'tool_mcp'; config = @{ server = 'orders-db'; mode = 'read_only' } }
+    $script:SecretAgent = Save-Agent $A 'Confidential agent' (New-AgentGraph -Model 'groq' -Sources @{ s1 = $secretPdf } -Extra @($calc, $mcp)) $script:Secret
     Test-Check 'a local-only project refuses cloud models: agent setting, chosen model, project chat, unsaved graph' {
         $codes = @((Call $A 'POST' '/pipeline/run?stream=false' @{ question = 'delivery'; graph_id = $script:SecretAgent }).Status,
                    (Call $A 'POST' '/pipeline/run?stream=false' @{ question = 'delivery'; graph_id = $script:SecretAgent; model = 'gemini' }).Status,
                    (Call $A 'POST' '/pipeline/run?stream=false' @{ question = 'delivery'; project_id = $script:Secret; model = 'groq' }).Status,
-                   (Call $A 'POST' '/pipeline/run?stream=false' @{ question = 'delivery'; project_id = $script:Secret; graph = (New-AgentGraph -Model 'groq' -Sources @{ s1 = $secretPdf }) }).Status)
-        if (($codes -join ',') -eq '400,400,400,400') { $true } else { "codes $($codes -join ',')" }
+                   (Call $A 'POST' '/pipeline/run?stream=false' @{ question = 'delivery'; project_id = $script:Secret; graph = (New-AgentGraph -Model 'groq' -Sources @{ s1 = $secretPdf }) }).Status,
+                   (Call $A 'POST' '/pipeline/run?stream=false' @{ question = 'delivery'; graph_id = $script:SecretAgent; model = 'groq'; local_only = $false }).Status)
+        if (($codes -join ',') -eq '400,400,400,400,400') { $true } else { "codes $($codes -join ',')" }
     }
     if (-not (Get-Command $pyExe -ErrorAction SilentlyContinue)) { throw [System.OperationCanceledException]::new('Python is not installed') }
     $fake = Start-Process $pyExe -ArgumentList @('tests\fake_gemini.py', "$FakePort", '0.01') -PassThru -WindowStyle Hidden
@@ -343,14 +345,25 @@ try {
         if ((Get-Count) -gt $c0 -and "$($r.Last.model)".StartsWith('groq:')) { $true } else { "count $c0 -> $(Get-Count)" }
     }
     $c0 = Get-Count
-    Test-Check 'local-only project: RAG and Calculator answers use only local models (plan and answer)' {
+    Test-Check 'local-only project: RAG, Calculator and MCP answers use only local models (tool plan and answer)' {
         $bad = @()
-        foreach ($q in @('Above what order value is delivery free?', 'My order is Rs. 450. How much more do I need to spend to get free delivery?')) {
-            $r = Ask $A @{ question = $q; graph_id = $script:SecretAgent; model = 'local' }
+        foreach ($x in @(@{ q = 'Above what order value is delivery free?'; tool = $null },
+                         @{ q = 'My order is Rs. 450. How much more do I need to spend to get free delivery?'; tool = 'calculator' },
+                         @{ q = 'What is the status and refund of order ORD-1002?'; tool = 'get_order' })) {
+            $r = Ask $A @{ question = $x.q; graph_id = $script:SecretAgent; model = 'local' }
             $steps = @($r.Agent.generation.steps | ForEach-Object { $_.model })
-            if (-not $r.Last.local_only -or @($steps | Where-Object { $_ -notlike 'local*' }).Count -gt 0 -or $steps.Count -eq 0) { $bad += "steps $($steps -join ',')" }
+            $tools = @($r.Last.tool_calls | ForEach-Object { $_.tool })
+            if (-not $r.Last.local_only -or @($steps | Where-Object { $_ -notlike 'local*' }).Count -gt 0 -or $steps.Count -eq 0 -or
+                ($x.tool -and $tools -notcontains $x.tool)) { $bad += "$($x.tool): steps $($steps -join ','), tools $($tools -join ',')" }
         }
         if ($bad.Count -eq 0) { $true } else { $bad -join ' | ' }
+    }
+    if (-not (Restart-Api ($cloud + @('OLLAMA_CHAT_MODEL: not-pulled-model:14b')))) { throw 'api did not come back' }
+    Test-Check 'local-only project with the main local model missing: the 3B backup answers (Calculator), no cloud' {
+        $r = Ask $A @{ question = 'My order is Rs. 450. How much more do I need to spend to get free delivery?'; graph_id = $script:SecretAgent; model = 'local' }
+        $steps = @($r.Agent.generation.steps | ForEach-Object { $_.model })
+        if ("$($r.Last.model)".StartsWith('local_small:') -and $r.Last.fallback.from -eq 'local' -and @($steps | Where-Object { $_ -notlike 'local_small*' }).Count -eq 0) { $true }
+        else { "model $($r.Last.model), steps $($steps -join ','), type $($r.Last.type) $($r.Last.code)" }
     }
     if (-not (Restart-Api ($cloud + @('OLLAMA_CHAT_MODEL: not-pulled-model:14b', 'OLLAMA_BACKUP_MODEL: not-pulled-model:3b')))) { throw 'api did not come back' }
     Test-Check 'local-only project with both local models missing: a clear error, no cloud fallback' {
