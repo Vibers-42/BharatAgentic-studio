@@ -49,5 +49,12 @@ class Settings:
     github_token: str = os.getenv("GITHUB_TOKEN", "")
     usd_to_inr: float = float(os.getenv("USD_TO_INR", "84"))
 
+    # Phase 8 accounts. COOKIE_SECURE must be true when the app is served over HTTPS (production); it stays
+    # false for http://localhost, where browsers would otherwise drop the cookie.
+    session_hours: int = int(os.getenv("SESSION_HOURS", "24"))
+    cookie_secure: bool = os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes")
+    invitation_days: int = int(os.getenv("INVITATION_DAYS", "7"))
+    history_messages: int = int(os.getenv("CHAT_HISTORY_MESSAGES", "4"))  # earlier messages a follow-up sees
+
 
 settings = Settings()

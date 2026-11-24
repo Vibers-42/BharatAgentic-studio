@@ -119,7 +119,8 @@ function New-Graph([string]$Model = 'local', [object[]]$Extra = @()) {
     @{ nodes = $nodes + $Extra; edges = $edges }
 }
 
-$Pdf = @{ id = 's1'; type = 'source_doc'; config = @{ file = 'refund-policy.pdf' }; position = @{ x = 0; y = 420 } }
+# Phase 8: the node points at the PDF in the test account's project (source_ref is filled in after the upload).
+$Pdf = @{ id = 's1'; type = 'source_doc'; config = @{ source_ref = 0 }; position = @{ x = 0; y = 420 } }
 $Calc = @{ id = 't1'; type = 'tool_calculator'; config = @{}; position = @{ x = 600; y = 360 } }
 $Mcp = @{ id = 't2'; type = 'tool_mcp'; config = @{ server = 'orders-db'; mode = 'read_only' }; position = @{ x = 600; y = 480 } }
 $RefundQ = 'My lab test cost Rs. 1200 and I cancelled before the sample was collected. How much will I get back?'
@@ -157,8 +158,14 @@ function Test-ToolAnswer($Events, [string]$Model) {
 $script:ApiUp = $false
 try { $script:ApiUp = ((Invoke-Api 'GET' "$Api/health").Json.ok -eq $true) } catch { }
 $Stamp = Get-Date -Format 'MMddHHmmss'
-$User = "p7_$Stamp"
 $script:GraphId = 0
+if ($script:ApiUp) {
+    # Phase 8: a fresh test account (real registration, own session and CSRF token) replaces the p7_<time> user.
+    . "$PSScriptRoot\_session.ps1"
+    $script:Who = New-TestSession 'p7'
+    $script:Http = $script:Who.Http
+}
+$Pid8 = $script:Who.Project
 
 Write-Host "`n== Containers and MCP security"
 Test-Check 'all five containers are running' {
@@ -184,44 +191,47 @@ Test-Check 'MCP runner still has no network path to the database' {
 Write-Host "`n== Graph rules for tools"
 Test-Check 'an MCP tool pointing at an unknown server is refused' {
     $bad = @{ id = 't2'; type = 'tool_mcp'; config = @{ server = 'http://169.254.169.254/'; mode = 'read_only' } }
-    $errs = @((Invoke-Api 'POST' "$Api/pipeline/validate" (ConvertTo-Json10 (New-Graph 'local' @($bad)))).Json.errors)
+    $errs = @((Invoke-Api 'POST' "$Api/pipeline/validate?project_id=$Pid8" (ConvertTo-Json10 (New-Graph 'local' @($bad)))).Json.errors)
     if ($errs.Count -eq 1 -and $errs[0].code -eq 'unknown_mcp_server' -and $errs[0].node_id -eq 't2') { $true } else { ($errs | ForEach-Object { $_.code }) -join ', ' }
 }
 Test-Check 'an MCP tool in write mode is refused unless writing is enabled on purpose' {
     $bad = @{ id = 't2'; type = 'tool_mcp'; config = @{ server = 'orders-db'; mode = 'read_write' } }
-    $errs = @((Invoke-Api 'POST' "$Api/pipeline/validate" (ConvertTo-Json10 (New-Graph 'local' @($bad)))).Json.errors)
+    $errs = @((Invoke-Api 'POST' "$Api/pipeline/validate?project_id=$Pid8" (ConvertTo-Json10 (New-Graph 'local' @($bad)))).Json.errors)
     if ($errs.Count -eq 1 -and $errs[0].code -eq 'mcp_not_read_only') { $true } else { ($errs | ForEach-Object { $_.code }) -join ', ' }
 }
 Test-Check 'a run with a tool that is not connected to the agent is refused (422 not_connected)' {
     $g = New-Graph 'local' @()
     $g.nodes += $Calc
-    $r = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" (ConvertTo-Json10 @{ question = $RefundQ; graph = $g; user = 'demo' })
+    $r = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" (ConvertTo-Json10 @{ question = $RefundQ; project_id = $Pid8; graph = $g })
     $codes = @($r.Json.detail.errors | ForEach-Object { $_.code })
     if ($r.Status -eq 422 -and $codes -contains 'not_connected') { $true } else { "HTTP $($r.Status) $($codes -join ', ')" }
 }
 
 Write-Host "`n== Saved agent and its documents"
-Test-Check 'test user created' {
-    $r = Invoke-Api 'POST' "$Api/users" (ConvertTo-Json10 @{ name = $User })
-    if ($r.Status -eq 201) { $true } else { "HTTP $($r.Status)" }
+Test-Check 'requests are made as the signed-in test account (the open user list is gone)' {
+    $me = (Invoke-Api 'GET' "$Api/auth/me").Json.user
+    $list = Invoke-Api 'GET' "$Api/users"
+    if ($me.id -eq $script:Who.UserId -and $list.Status -in 404, 405) { $true } else { "me=$($me.id), GET /users HTTP $($list.Status)" }
 }
-Test-Check 'agent with PDF, calculator and MCP tool saved; PDF uploaded through the API' {
-    $r = Invoke-Api 'POST' "$Api/graphs" (ConvertTo-Json10 @{ name = "verify_phase7 $Stamp"; graph = (New-Graph 'local' @($Pdf, $Calc, $Mcp)) })
-    if ($r.Status -ne 201) { return "save: HTTP $($r.Status)" }
+Test-Check 'PDF uploaded to the project through the API; agent with PDF, calculator and MCP tool saved' {
+    $code = Send-Pdf "$Api/projects/$Pid8/sources/file" 'samples\refund-policy.pdf'
+    if ($code -ne 201) { return "upload: HTTP $code" }
+    $Pdf.config.source_ref = @((Invoke-Api 'GET' "$Api/projects/$Pid8/sources").Json | Where-Object { $_.title -eq 'refund-policy.pdf' })[0].id
+    $r = Invoke-Api 'POST' "$Api/graphs" (ConvertTo-Json10 @{ project_id = $Pid8; name = "verify_phase7 $Stamp"; graph = (New-Graph 'local' @($Pdf, $Calc, $Mcp)) })
+    if ($r.Status -ne 201) { return "save: HTTP $($r.Status) $($r.Text)" }
     $script:GraphId = $r.Json.id
-    $code = Send-Pdf "$Api/sources/s1/pdf?graph_id=$($script:GraphId)" 'samples\refund-policy.pdf'
-    if ($code -eq 201) { $true } else { "upload: HTTP $code" }
+    $true
 }
-Test-Check 'the source listing the canvas uses shows the uploaded PDF and its chunks' {
-    $l = (Invoke-Api 'GET' "$Api/sources?graph_id=$($script:GraphId)").Json
-    $s = $l.sources | Where-Object { $_.source_id -eq 's1' }
-    if ($l.scope -eq "graph:$($script:GraphId)" -and $s.file -eq 'refund-policy.pdf' -and $s.chunks -gt 0) { $true } else { "listing: $(ConvertTo-Json10 $l)" }
+Test-Check 'the project source listing the canvas uses shows the PDF, its chunks and the agent using it' {
+    $s = @((Invoke-Api 'GET' "$Api/projects/$Pid8/sources").Json | Where-Object { $_.id -eq $Pdf.config.source_ref })[0]
+    $agents = @((Invoke-Api 'GET' "$Api/sources/$($s.id)").Json.agents | ForEach-Object { $_.id })
+    if ($s.status -eq 'ready' -and $s.chunk_count -gt 0 -and $agents -contains $script:GraphId) { $true } else { "listing: $(ConvertTo-Json10 $s), agents $($agents -join ',')" }
 }
 
 Write-Host "`n== Tools in real answers (Qwen 3 14B, local only)"
 $script:LocalRun = $null
 Test-Check 'refund question runs the calculator, and the answer cites the PDF and the calculator' {
-    $script:LocalRun = Get-Run (ConvertTo-Json10 @{ question = $RefundQ; graph_id = $script:GraphId; model = 'local'; user = $User; local_only = $true })
+    $script:LocalRun = Get-Run (ConvertTo-Json10 @{ question = $RefundQ; graph_id = $script:GraphId; model = 'local'; local_only = $true })
     Test-ToolAnswer $script:LocalRun 'local'
 }
 Test-Check 'local only: every model call of that question (tool plan and answer) was a local model' {
@@ -233,7 +243,7 @@ Test-Check 'local only: every model call of that question (tool plan and answer)
     else { "local_only=$($final.local_only), steps=$(($steps | ForEach-Object { "$($_.step):$($_.model)" }) -join ', ')" }
 }
 Test-Check 'order question calls the MCP tool get_order, streamed through nginx as SSE events' {
-    $events = Invoke-Stream (ConvertTo-Json10 @{ question = $OrderQ; graph_id = $script:GraphId; model = 'local'; user = $User; local_only = $true })
+    $events = Invoke-Stream (ConvertTo-Json10 @{ question = $OrderQ; graph_id = $script:GraphId; model = 'local'; local_only = $true })
     $types = @($events | ForEach-Object { $_.type })
     $call = [array]::IndexOf($types, 'tool_call'); $res = [array]::IndexOf($types, 'tool_result'); $end = [array]::IndexOf($types, 'result')
     $final = Get-Final $events
@@ -244,7 +254,7 @@ Test-Check 'order question calls the MCP tool get_order, streamed through nginx 
     if ($final.supported -and $cited -contains 't2' -and $final.answer -match 'ORD-1002|960|cancel') { $true } else { "answer: $($final.answer) cites $($cited -join ', ')" }
 }
 Test-Check 'without a tool drawn into the agent, the same question never calls a tool' {
-    $events = Get-Run (ConvertTo-Json10 @{ question = $RefundQ; graph = (New-Graph 'local' @($Pdf)); graph_id = $script:GraphId; user = $User; local_only = $true })
+    $events = Get-Run (ConvertTo-Json10 @{ question = $RefundQ; graph = (New-Graph 'local' @($Pdf)); graph_id = $script:GraphId; local_only = $true })
     $calls = @($events | Where-Object { $_.type -eq 'tool_call' })
     $final = Get-Final $events
     if ($calls.Count -eq 0 -and $final.route -eq 'search' -and @($final.tool_calls).Count -eq 0) { $true } else { "tool calls: $($calls.Count), route $($final.route)" }
@@ -252,7 +262,7 @@ Test-Check 'without a tool drawn into the agent, the same question never calls a
 Test-Check 'with the MCP runner stopped, the order question still answers with a clear warning' {
     $null = Invoke-Native 'docker' @('compose', 'stop', 'mcp-runner')
     try {
-        $events = Get-Run (ConvertTo-Json10 @{ question = $OrderQ; graph_id = $script:GraphId; model = 'local'; user = $User; local_only = $true })
+        $events = Get-Run (ConvertTo-Json10 @{ question = $OrderQ; graph_id = $script:GraphId; model = 'local'; local_only = $true })
     } finally {
         $null = Invoke-Native 'docker' @('compose', 'start', 'mcp-runner')
     }
@@ -272,20 +282,20 @@ Test-Check 'MCP runner is back and healthy' {
 
 Write-Host "`n== The same tools on the cloud models"
 Test-Check 'Groq (GPT-OSS 120B): calculator result reaches the model and is cited' {
-    $events = Get-Run (ConvertTo-Json10 @{ question = $RefundQ; graph_id = $script:GraphId; model = 'groq'; user = $User })
+    $events = Get-Run (ConvertTo-Json10 @{ question = $RefundQ; graph_id = $script:GraphId; model = 'groq' })
     $ok = Test-ToolAnswer $events 'groq'
     if ($ok -ne $true) { return $ok }
     $final = Get-Final $events
     if ($final.cost.priced -and $final.cost.usd -gt 0) { $true } else { "cost: $(ConvertTo-Json10 $final.cost)" }
 }
 Test-Check 'Gemini (2.5 Flash): calculator result reaches the model and is cited' {
-    $events = Get-Run (ConvertTo-Json10 @{ question = $RefundQ; graph_id = $script:GraphId; model = 'gemini'; user = $User })
+    $events = Get-Run (ConvertTo-Json10 @{ question = $RefundQ; graph_id = $script:GraphId; model = 'gemini' })
     Test-ToolAnswer $events 'gemini'
 }
 
 Write-Host "`n== Usage"
 Test-Check 'one usage row per question, with the tool plan and the answer added up' {
-    $rows = @((Invoke-Api 'GET' "$Api/usage/recent?user=$User&model=local&limit=50").Json)
+    $rows = @((Invoke-Api 'GET' "$Api/usage/recent?model=local&limit=50").Json)
     $first = Get-Final $script:LocalRun
     $match = $rows | Where-Object { $_.input_tokens -eq $first.usage.input_tokens -and $_.output_tokens -eq $first.usage.output_tokens }
     $agent = $script:LocalRun | Where-Object { $_.stage -eq 'agent' -and $_.status -eq 'done' }
@@ -294,8 +304,8 @@ Test-Check 'one usage row per question, with the tool plan and the answer added 
     else { "rows=$($rows.Count), steps sum=$sum, answer=$($first.usage.input_tokens)" }
 }
 Test-Check 'usage filters by model and refuses a malformed model name' {
-    $local = (Invoke-Api 'GET' "$Api/usage/totals?user=$User&model=local").Json
-    $all = (Invoke-Api 'GET' "$Api/usage/totals?user=$User").Json
+    $local = (Invoke-Api 'GET' "$Api/usage/totals?model=local").Json
+    $all = (Invoke-Api 'GET' "$Api/usage/totals").Json
     $bad = Invoke-Api 'GET' "$Api/usage/totals?model=x%27%3B"
     if ($local.requests -ge 4 -and $local.cost_usd -eq 0 -and $all.requests -gt $local.requests -and $bad.Status -eq 422) { $true }
     else { "local=$($local.requests), all=$($all.requests), bad=$($bad.Status)" }

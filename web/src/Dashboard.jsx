@@ -130,40 +130,38 @@ function Kpi({ label, value, sub, icon }) {
 
 const modelName = (m) => m.replace(/^([a-z_]+):/, (_, k) => `${{ gemini: "Gemini", groq: "Groq", local: "Local", local_small: "Local backup" }[k] || k} · `);
 
-export default function Dashboard() {
-  const [users, setUsers] = useState([]);
+export default function Dashboard({ org, isAdmin }) {
   const [models, setModels] = useState([]);
-  const [user, setUser] = useState("");
+  const [scope, setScope] = useState("me");   // "me" or "workspace" (owners and admins); the api enforces it
   const [model, setModel] = useState("");
   const [days, setDays] = useState(14);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api("/users").then(setUsers).catch(() => {});
     api("/models").then((d) => setModels(d.models)).catch(() => {});
   }, []);
 
   useEffect(() => {
     const q = (extra) => {
       const p = new URLSearchParams({ days: String(days), ...extra });
-      if (user) p.set("user", user);
+      if (scope === "workspace" && org) p.set("org_id", String(org.id));
       if (model) p.set("model", model);
       return `?${p}`;
     };
     setData(null);
     setError("");
-    const userless = new URLSearchParams({ days: String(days), ...(model ? { model } : {}) });
     Promise.all([
       api(`/usage/totals${q({})}`),
       api(`/usage/by-model${q({})}`.replace(/&?model=[^&]*/, "")),
-      api(`/usage/by-user?${userless}`),
+      api(`/usage/by-user${q({})}`),
       api(`/usage/by-day${q({})}`),
       api(`/usage/recent${q({ limit: "12" })}`),
+      api(`/usage/by-project${q({})}`),
     ])
-      .then(([totals, byModel, byUser, byDay, recent]) => setData({ totals, byModel, byUser, byDay, recent }))
+      .then(([totals, byModel, byUser, byDay, recent, byProject]) => setData({ totals, byModel, byUser, byDay, recent, byProject }))
       .catch((err) => setError(`Cannot load usage: ${err.message}`));
-  }, [user, model, days]);
+  }, [scope, model, days, org?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const t = data?.totals;
   const shownByModel = data ? data.byModel.filter((r) => !model || r.model.startsWith(`${model}:`)) : [];
@@ -173,14 +171,14 @@ export default function Dashboard() {
       <header className="page-head">
         <div>
           <h1>Usage</h1>
-          <p className="muted">Requests, tokens and estimated cost per user and model. Estimates from the price table, not a bill.</p>
+          <p className="muted">{scope === "workspace" ? `Everyone in ${org?.name}: requests, tokens and estimated cost per project, model and person (never message content).` : "Your own requests, tokens and estimated cost."} Estimates from the price table, not a bill.</p>
         </div>
       </header>
 
       <div className="filters" role="group" aria-label="Filters">
-        <select value={user} onChange={(e) => setUser(e.target.value)} aria-label="User">
-          <option value="">All users</option>
-          {users.map((u) => <option key={u.name} value={u.name}>{u.name}</option>)}
+        <select value={scope} onChange={(e) => setScope(e.target.value)} aria-label="Whose usage">
+          <option value="me">My usage</option>
+          {isAdmin && org?.kind === "company" && <option value="workspace">Whole workspace: {org.name}</option>}
         </select>
         <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model filter">
           <option value="">All models</option>
@@ -219,8 +217,8 @@ export default function Dashboard() {
             <Bars title="Estimated cost by model" rows={shownByModel} label={(r) => modelName(r.model)} value={(r) => r.cost_inr} format={inr} />
             <Bars title="Requests by model" rows={shownByModel} label={(r) => modelName(r.model)} value={(r) => r.requests} format={compact}
               sub={(r) => (r.errors ? `${r.errors} failed` : "")} />
-            <Bars title="Requests by user" rows={data.byUser.filter((r) => !user || r.user === user)} label={(r) => r.user} value={(r) => r.requests} format={compact} />
-            <Bars title="Tokens by user" rows={data.byUser.filter((r) => !user || r.user === user)} label={(r) => r.user} value={(r) => r.input_tokens + r.output_tokens} format={compact} />
+            <Bars title="Requests by project" rows={data.byProject} label={(r) => r.project} value={(r) => r.requests} format={compact} />
+            <Bars title={scope === "workspace" ? "Tokens by person" : "Your tokens"} rows={data.byUser} label={(r) => r.user} value={(r) => r.input_tokens + r.output_tokens} format={compact} />
           </div>
           <div className="card">
             <div className="card-head"><h3>Latest answers</h3></div>

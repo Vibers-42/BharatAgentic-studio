@@ -35,7 +35,8 @@ def _lock_source(conn, scope: str, source_id: str) -> None:
 
 
 def replace_source(source_id: str, source_type: str, file_name: str, chunks: list[tuple],
-                   vectors: list[list[float]], scope: str = INLINE) -> int:
+                   vectors: list[list[float]], scope: str = INLINE, source_ref: int | None = None,
+                   on_commit=None) -> int:
     """Delete the source's old chunks in this scope and insert the new ones in one transaction.
     chunks: [(page, text)] or [(page, text, file_name, origin)] when one source holds many files."""
     rows = []
@@ -43,14 +44,16 @@ def replace_source(source_id: str, source_type: str, file_name: str, chunks: lis
         page, text = chunk[0], chunk[1]
         name = chunk[2] if len(chunk) > 2 else file_name
         origin = chunk[3] if len(chunk) > 3 else None
-        rows.append((scope, source_id, source_type, name, i, page, text, origin, np.array(vec, dtype=np.float32)))
+        rows.append((scope, source_id, source_type, name, i, page, text, origin, np.array(vec, dtype=np.float32), source_ref))
     with get_conn() as conn:
         _lock_source(conn, scope, source_id)
         conn.execute("DELETE FROM chunks WHERE scope = %s AND source_id = %s", (scope, source_id))
         with conn.cursor() as cur:
             cur.executemany(
-                "INSERT INTO chunks (scope, source_id, source_type, file_name, chunk_index, page, content, origin, embedding)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", rows)
+                "INSERT INTO chunks (scope, source_id, source_type, file_name, chunk_index, page, content, origin, embedding,"
+                " source_ref) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", rows)
+        if on_commit is not None:  # e.g. mark the registry source ready in the same transaction
+            on_commit(conn, len(rows))
     return len(rows)
 
 

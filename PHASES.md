@@ -12,6 +12,7 @@ starting the next.
 | 5 | **More sources and languages**: GitHub repo and docs-URL connectors, Telugu/Hindi replies, cross-language retrieval, 10–15 test questions per language and an eval script per model | Telugu question finds an English doc; eval results table recorded |
 | 6 | **Canvas and dashboard**: React Flow canvas with the five fixed nodes plus draggable source/tool nodes, graph JSON export, nodes light up from status events, answer card, usage dashboard with charts | Nodes light up during a question; dashboard shows per-user and per-model totals |
 | 7 | **Tools and ship**: calculator tool, one read-only MCP tool in `mcp-runner`, tool calls shown on canvas and answer, README, demo script, fresh-clone test | `docker compose up` works on a clean machine; 2-minute demo runs end to end |
+| 8 | **Collaboration**: landing page, accounts and secure sessions, personal and company workspaces, invitations with owner/admin confirmation, roles, projects with members, shared project knowledge (PDF, GitHub, docs link, TXT/MD/DOCX/CSV/XLSX), shared agents, private persistent conversations, usage ownership, tenant and project isolation, migration of existing data | One person uploads, another asks the shared agent in their own conversation, an outsider is refused everywhere (`verify_phase8.ps1`, `ui_journeys.py`) |
 
 Never cut: cited answers, the model dropdown, cost on every answer, the Telugu and Hindi test.
 
@@ -19,7 +20,7 @@ Never cut: cited answers, the model dropdown, cost on every answer, the Telugu a
 
 | Requirement | Where | Status |
 |---|---|---|
-| Document chunks are isolated between saved graphs, even when two graphs use the same source id | Phase 5 | Done: chunks are keyed by scope (`graph:<id>` or `inline`) + source id. |
+| Document chunks are isolated between saved graphs, even when two graphs use the same source id | Phase 5 | Done: chunks are keyed by scope + source id. Since Phase 8 the boundary is the project (`project:<id>`, registry source `src<id>`); two agents in different projects with the same node id never share chunks, and an agent cannot point at another project's source (422). |
 | Citations must support the actual claims, not just exist | Phase 5 | Done: every cited sentence must have its numbers in the cited chunk and be close to it in meaning (bge-m3, threshold 0.45 measured on the samples); others are removed. Limit: a sentence that is on-topic and has no numbers but says something the chunk does not can still pass. |
 | Canvas node highlighting is driven by the real `/pipeline/run` SSE events | Phase 6 | Done: node status comes only from the stream's stage events (by `node_id`); source highlights come from the agent's retrieval report and the result's citations. |
 
@@ -67,6 +68,19 @@ The first runs of `scripts/eval_languages.py` found three pipeline bugs, now fix
   generation (`OLLAMA_NUM_PREDICT`), empty tool plans (one retry), generic error code when Ollama is down.
 - Documents: docs/PHASE_7_1_AUDIT.md, docs/PERFORMANCE_BENCHMARKS.md, docs/PHASE_8_READINESS.md.
 - Scripts: verify_phase7_1.ps1, model_matrix.py, load_test.py, knowledge_scaling.py, extended ui_journeys.py.
+
+## Phase 8: collaboration, accounts and isolation
+
+- Built: see the table above and docs/PHASE_8_PLAN.md, PHASE_8_IMPLEMENTATION.md, PHASE_8_SECURITY.md,
+  PHASE_8_DEMO.md. Migration `m0001_collaboration` keeps all earlier data in a hidden legacy workspace
+  (`python -m app.admin claim-legacy <email>`).
+- Fixed while verifying: a follow-up search that let the previous question crowd out a new topic (the
+  question is now always searched on its own as well); concurrent file replacements sharing one temporary
+  file; sources left "processing" forever after an api restart (now marked failed with a reason).
+- Every earlier verification script now signs in as a fresh test account and uses project-scoped APIs;
+  checks for removed features (per-graph uploads, the open user list, the quick-chat source) were replaced
+  by their Phase 8 equivalents, each with a comment saying why.
+- Scripts: verify_phase8.ps1, verify_all.ps1, _session.ps1 / _session.py, the multi-user ui_journeys.py.
 
 ## Known issues to revisit
 

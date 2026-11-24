@@ -145,7 +145,8 @@ describe("validation errors and summaries", () => {
 
   it("summarises node settings on the node", () => {
     expect(summary("agent", { model: "local", language: "te", local_only: true })).toBe("local · te · local only");
-    expect(summary("source_doc", { url: "" })).toBe("no link yet");
+    expect(summary("source_doc", { source_ref: 7 })).toBe("");  // the status line on the block says it instead
+    expect(summary("source_repo", {})).toBe("");
     expect(summary("tool_mcp", { server: "orders-db", mode: "read_only" })).toBe("orders-db · read_only");
   });
 });

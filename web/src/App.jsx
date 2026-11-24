@@ -1,60 +1,142 @@
-// App shell: a sidebar with the five screens (Builder, Chat, Knowledge, Usage, Status), the user switcher
-// ("usage per person" needs a person) and a light/dark switch. On small screens the sidebar becomes a
-// drawer opened from the top bar. The screen is kept in the URL hash, so reloads and links keep it.
-import { useEffect, useState } from "react";
-import { api } from "./api.js";
+// The app: public pages (landing, sign in, register, invitation) and, after sign-in, the workspace shell.
+// Routes live in the URL hash (#/login, #/invite/<token>, #/app/chat ...). Who the user is comes only from the
+// api's /auth/me (the session cookie is HttpOnly); the active workspace and project are UI choices kept in
+// localStorage for convenience, and the api checks access on every request anyway.
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api, setCsrf } from "./api.js";
+import { Invite, Login, Register, SessionEnded } from "./AuthPages.jsx";
 import Builder from "./canvas/Builder.jsx";
 import Chat from "./Chat.jsx";
 import Dashboard from "./Dashboard.jsx";
 import Icon from "./Icon.jsx";
 import Knowledge from "./Knowledge.jsx";
+import Landing from "./Landing.jsx";
+import Members from "./Members.jsx";
+import Overview from "./Overview.jsx";
+import Projects from "./Projects.jsx";
+import Settings from "./Settings.jsx";
 import Status from "./Status.jsx";
 
-const SCREENS = [
-  ["builder", "Builder", "builder"],
-  ["chat", "Chat", "chat"],
-  ["knowledge", "Knowledge", "knowledge"],
-  ["dashboard", "Usage", "dashboard"],
-  ["status", "Status", "status"],
-];
-
-function readHash() {
-  const h = window.location.hash.replace("#", "");
-  return SCREENS.some(([k]) => k === h) ? h : "builder";
+function parseHash() {
+  const h = window.location.hash.replace(/^#\/?/, "");
+  const [first, ...rest] = h.split("/");
+  return { page: first || "home", arg: rest.join("/") };
 }
 
-function storedTheme() {
-  try { return localStorage.getItem("theme") || "dark"; } catch { return "dark"; }
-}
+export function go(path) { window.location.hash = `#/${path}`; }
+
+function remember(key, value) { try { localStorage.setItem(key, String(value)); } catch { /* private mode */ } }
+function recall(key) { try { return localStorage.getItem(key); } catch { return null; } }
+
+function storedTheme() { return recall("theme") || "dark"; }
 
 export default function App() {
-  const [screen, setScreen] = useState(readHash);
-  const [users, setUsers] = useState([]);
-  const [user, setUser] = useState("demo");
+  const [session, setSession] = useState(undefined); // undefined while loading, null when signed out
+  const [ended, setEnded] = useState(false);
+  const [route, setRoute] = useState(parseHash);
   const [theme, setTheme] = useState(storedTheme);
-  const [drawer, setDrawer] = useState(false);
-  const [online, setOnline] = useState(null);
+
+  const loadMe = useCallback(() => api("/auth/me").then((m) => { setCsrf(m.csrf_token); setSession(m); return m; })
+    .catch(() => { setCsrf(""); setSession(null); return null; }), []);
 
   useEffect(() => {
-    api("/users").then(setUsers).catch(() => {});
-    api("/status").then((s) => setOnline(s.api && s.db && s.ollama)).catch(() => setOnline(false));
-    const onHash = () => setScreen(readHash());
+    loadMe();
+    const onHash = () => setRoute(parseHash());
+    const onEnded = () => { setCsrf(""); setSession(null); setEnded(true); };
     window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
+    window.addEventListener("session-ended", onEnded);
+    return () => { window.removeEventListener("hashchange", onHash); window.removeEventListener("session-ended", onEnded); };
+  }, [loadMe]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem("theme", theme); } catch { /* private mode */ }
+    remember("theme", theme);
   }, [theme]);
 
-  function go(key) {
-    window.location.hash = key;
-    setScreen(key);
+  const signedIn = (me) => { setCsrf(me.csrf_token); setSession(me); setEnded(false); };
+
+  if (session === undefined) return <div className="boot"><span className="spinner" /> Loading…</div>;
+  const themeButton = <ThemeButton theme={theme} setTheme={setTheme} />;
+
+  if (route.page === "invite") return <Invite token={route.arg} session={session} onSignedIn={signedIn} reload={loadMe} themeButton={themeButton} />;
+  if (!session) {
+    if (ended && route.page === "app") return <SessionEnded themeButton={themeButton} />;
+    if (route.page === "login" || route.page === "app") return <Login onSignedIn={signedIn} themeButton={themeButton} />;
+    if (route.page === "register") return <Register onSignedIn={signedIn} themeButton={themeButton} />;
+    return <Landing themeButton={themeButton} />;
+  }
+  if (route.page !== "app") { go("app/overview"); return null; }
+  return <Shell session={session} screen={route.arg || "overview"} reload={loadMe} themeButton={themeButton}
+    onSignedOut={() => { setCsrf(""); setSession(null); go("login"); }} />;
+}
+
+function ThemeButton({ theme, setTheme }) {
+  return (
+    <button className="btn ghost icon-btn sm" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} title="Switch theme">
+      <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />
+    </button>
+  );
+}
+
+const SCREENS = [
+  ["overview", "Overview", "dashboard"],
+  ["projects", "Projects", "folder"],
+  ["knowledge", "Knowledge", "knowledge"],
+  ["agents", "Agents", "builder"],
+  ["chat", "Chat", "chat"],
+  ["usage", "Usage", "status"],
+  ["members", "Members", "user"],
+  ["settings", "Settings", "validate"],
+];
+
+function Shell({ session, screen, reload, themeButton, onSignedOut }) {
+  const active = session.workspaces.filter((w) => w.status === "active");
+  const pending = session.workspaces.filter((w) => w.status === "pending");
+  const [orgId, setOrgId] = useState(() => {
+    const saved = Number(recall("org"));
+    return active.some((w) => w.id === saved) ? saved : active[0]?.id;
+  });
+  const org = active.find((w) => w.id === orgId) || active[0];
+  const [projects, setProjects] = useState(null);
+  const [projectId, setProjectId] = useState(() => Number(recall("project")) || null);
+  const [drawer, setDrawer] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  const loadProjects = useCallback(() => {
+    if (!org) return Promise.resolve();
+    // No setProjects(null) here: a refresh after an upload must not unmount the open screen (and lose its
+    // message). The list is cleared only when the workspace changes (switchOrg, a new company).
+    return api(`/projects?org_id=${org.id}`).then((list) => {
+      setProjects(list);
+      setProjectId((cur) => (list.some((p) => p.id === cur) ? cur : list.find((p) => !p.archived)?.id ?? null));
+    }).catch(() => setProjects([]));
+  }, [org?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { loadProjects(); }, [loadProjects]);
+  useEffect(() => { if (org) remember("org", org.id); }, [org]);
+  useEffect(() => { if (projectId) remember("project", projectId); }, [projectId]);
+
+  const project = projects?.find((p) => p.id === projectId) || null;
+  const isAdmin = org && ["owner", "admin"].includes(org.role);
+  const visible = SCREENS.filter(([key]) => (key === "members" ? org?.kind === "company" : key === "settings" ? true : true));
+
+  async function signOut() {
+    try { await api("/auth/logout", { method: "POST" }); } catch { /* already ended */ }
+    onSignedOut();
+  }
+
+  function switchOrg(value) {
+    if (value === "new") { setCreating(true); return; }
+    if (Number(value) === org?.id) return;  // same workspace: nothing to reload (and the list must not be cleared)
+    setProjects(null);
+    setOrgId(Number(value));
+    setProjectId(null);
     setDrawer(false);
   }
 
-  const title = SCREENS.find(([k]) => k === screen)?.[1];
+  const ctx = { session, org, isAdmin, project, projects, setProjectId, reloadProjects: loadProjects, reloadMe: reload };
+  const title = SCREENS.find(([k]) => k === screen)?.[1] || "Overview";
 
   return (
     <div className={`app${drawer ? " drawer-open" : ""}`}>
@@ -66,29 +148,43 @@ export default function App() {
           </span>
           <span className="brand-text"><strong>BharatAgent</strong><span>Studio</span></span>
         </div>
+
+        <label className="field ws-switch">
+          <span className="field-label">Workspace</span>
+          <select value={org?.id || ""} onChange={(e) => switchOrg(e.target.value)} aria-label="Workspace">
+            {active.map((w) => <option key={w.id} value={w.id}>{w.kind === "personal" ? `${w.name} (personal)` : w.name}</option>)}
+            <option value="new">+ Create a company…</option>
+          </select>
+        </label>
+        <label className="field ws-switch">
+          <span className="field-label">Project</span>
+          <select value={project?.id || ""} onChange={(e) => setProjectId(Number(e.target.value))} aria-label="Project"
+            disabled={!projects?.length}>
+            {!projects?.length && <option value="">{projects ? "No projects yet" : "Loading…"}</option>}
+            {projects?.map((p) => <option key={p.id} value={p.id}>{p.name}{p.archived ? " (archived)" : ""}</option>)}
+          </select>
+        </label>
+
         <nav>
-          {SCREENS.map(([key, label, icon]) => (
-            <a key={key} href={`#${key}`} className={`nav-item${screen === key ? " on" : ""}`} aria-current={screen === key ? "page" : undefined}
-              onClick={(e) => { e.preventDefault(); go(key); }}>
+          {visible.map(([key, label, icon]) => (
+            <a key={key} href={`#/app/${key}`} className={`nav-item${screen === key ? " on" : ""}`}
+              aria-current={screen === key ? "page" : undefined} onClick={() => setDrawer(false)}>
               <Icon name={icon} size={18} /> <span>{label}</span>
             </a>
           ))}
         </nav>
+        {pending.length > 0 && (
+          <p className="note small side-note"><Icon name="clock" size={13} /> Waiting for confirmation: {pending.map((w) => w.name).join(", ")}</p>
+        )}
         <div className="sidebar-foot">
-          <label className="field">
-            <span className="field-label"><Icon name="user" size={13} /> Signed in as</span>
-            <select value={user} onChange={(e) => setUser(e.target.value)} aria-label="User">
-              {(users.length ? users : [{ name: "demo" }]).map((u) => <option key={u.name} value={u.name}>{u.name}</option>)}
-            </select>
-          </label>
+          <div className="user-chip">
+            <span className="avatar sm">{(session.user.full_name || "?").slice(0, 1).toUpperCase()}</span>
+            <span className="user-text"><strong>{session.user.full_name}</strong><span className="muted small">{session.user.email}</span></span>
+          </div>
           <div className="foot-row">
-            <span className={`health ${online === null ? "" : online ? "up" : "down"}`} title="api, database and local models">
-              <span className={`dot ${online === null ? "" : online ? "up" : "down"}`} />{online === null ? "Checking…" : online ? "All systems local" : "Service down"}
-            </span>
-            <button className="btn ghost icon-btn sm" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} title="Switch theme">
-              <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />
-            </button>
+            <a href="#/app/status" className="health"><Icon name="status" size={13} /> System status</a>
+            {themeButton}
+            <button className="btn ghost icon-btn sm" onClick={signOut} aria-label="Sign out" title="Sign out"><Icon name="x" size={16} /></button>
           </div>
         </div>
       </aside>
@@ -98,17 +194,94 @@ export default function App() {
         <header className="topbar">
           <button className="btn ghost icon-btn" onClick={() => setDrawer(true)} aria-label="Open menu"><Icon name="menu" size={18} /></button>
           <strong>{title}</strong>
-          <span className="topbar-user muted small"><Icon name="user" size={13} /> {user}</span>
+          <span className="topbar-user muted small">{org?.name}</span>
         </header>
         <main id="main" className={`main screen-${screen}`}>
-          {/* The builder stays mounted (hidden) on other screens, so unsaved canvas work is kept. */}
-          <div className="builder-host" hidden={screen !== "builder"}><Builder user={user} /></div>
-          {screen === "chat" && <Chat user={user} go={go} />}
-          {screen === "knowledge" && <Knowledge go={go} />}
-          {screen === "dashboard" && <Dashboard />}
+          {screen === "overview" && <Overview {...ctx} />}
+          {screen === "projects" && <Projects {...ctx} />}
+          {screen === "knowledge" && <Gate project={project}><Knowledge {...ctx} /></Gate>}
+          {screen === "agents" && <Gate project={project}><Builder key={project?.id} {...ctx} /></Gate>}
+          {screen === "chat" && <Gate project={project}><Chat key={project?.id} {...ctx} /></Gate>}
+          {screen === "usage" && <Dashboard {...ctx} />}
+          {screen === "members" && <Members {...ctx} />}
+          {screen === "settings" && <Settings {...ctx} />}
           {screen === "status" && <Status />}
         </main>
       </div>
+      {creating && <CreateCompany onClose={() => setCreating(false)} onCreated={async (o) => {
+        setCreating(false); await reload(); setProjects(null); setOrgId(o.id); go("app/overview");
+      }} />}
     </div>
   );
+}
+
+function Gate({ project, children }) {
+  if (!project) {
+    return (
+      <div className="page-pad"><div className="empty">
+        <Icon name="folder" size={26} />
+        <h3>Choose or create a project first</h3>
+        <p className="muted">Knowledge, agents and chats belong to a project.</p>
+        <a className="btn primary" href="#/app/projects">Open projects</a>
+      </div></div>
+    );
+  }
+  return children;
+}
+
+export function Modal({ title, children, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal card" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="card-head"><h3>{title}</h3><button className="btn ghost icon-btn sm push" onClick={onClose} aria-label="Close"><Icon name="x" size={16} /></button></div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function CreateCompany({ onClose, onCreated }) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true); setError("");
+    try { onCreated(await api("/orgs", { method: "POST", body: { name, description } })); }
+    catch (err) { setError(err.message); setBusy(false); }
+  }
+  return (
+    <Modal title="Create a company" onClose={onClose}>
+      <form className="stack form" onSubmit={submit}>
+        <label className="field"><span className="field-label">Company name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} autoFocus /></label>
+        <label className="field"><span className="field-label">Description (optional)</span>
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} maxLength={1000} /></label>
+        {error && <p className="inline-msg err" role="alert"><Icon name="alert" size={14} /> {error}</p>}
+        <p className="muted small">You become its owner. You can invite colleagues from Members.</p>
+        <button className="btn primary" disabled={busy || !name.trim()}>{busy ? <span className="spinner" /> : null} Create company</button>
+      </form>
+    </Modal>
+  );
+}
+
+export function useConfirm() {
+  const [state, setState] = useState(null);
+  const ask = useCallback((message, action, label = "Delete") => setState({ message, action, label }), []);
+  const dialog = useMemo(() => state && (
+    <Modal title="Please confirm" onClose={() => setState(null)}>
+      <p>{state.message}</p>
+      <div className="row-end">
+        <button className="btn ghost" onClick={() => setState(null)}>Cancel</button>
+        <button className="btn danger" onClick={async () => { const a = state.action; setState(null); await a(); }}>{state.label}</button>
+      </div>
+    </Modal>
+  ), [state]);
+  return [ask, dialog];
 }

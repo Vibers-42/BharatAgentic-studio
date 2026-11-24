@@ -105,11 +105,40 @@ function New-CanvasGraph([string]$Model = 'groq', [bool]$LocalOnly = $false, [ob
 
 function ConvertTo-Json10($Object) { $Object | ConvertTo-Json -Depth 10 -Compress }
 
+$script:ApiUp = $false
+try { $script:ApiUp = ((Invoke-Api 'GET' "$Api/health").Json.ok -eq $true) } catch { }
+$script:GraphId = 0
+$script:S = @{ src1 = 0; src2 = 0; src3 = 0 }
+if ($script:ApiUp) {
+    # Phase 8: a fresh test account (real registration, own session and CSRF token). The PDF, docs link and
+    # GitHub repo are added to its project's knowledge first; the canvas source nodes then point at them.
+    . "$PSScriptRoot\_session.ps1"
+    $script:Who = New-TestSession 'p6'
+    $script:Http = $script:Who.Http
+}
+
+Write-Host "`n== Project knowledge: PDF, docs link and GitHub repo, added once"
+Test-Check 'PDF upload, docs link and GitHub repo are added to the project''s knowledge and become ready' {
+    if (-not $script:ApiUp) { return 'api is not reachable' }
+    $pid8 = $script:Who.Project
+    $form = [System.Net.Http.MultipartFormDataContent]::new()
+    $file = [System.Net.Http.ByteArrayContent]::new([System.IO.File]::ReadAllBytes((Resolve-Path 'samples\refund-policy.pdf')))
+    $file.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse('application/pdf')
+    $form.Add($file, 'file', 'refund-policy.pdf')
+    $res = $script:Http.PostAsync("$Api/projects/$pid8/sources/file", $form).GetAwaiter().GetResult()
+    $pdf = [System.Text.Encoding]::UTF8.GetString($res.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()) | ConvertFrom-Json
+    $url = Invoke-Api 'POST' "$Api/projects/$pid8/sources/url" '{"url":"https://example.com"}'
+    $repo = Invoke-Api 'POST' "$Api/projects/$pid8/sources/repo" '{"url":"https://github.com/octocat/Spoon-Knife"}'
+    $script:S = @{ src1 = $pdf.id; src2 = $url.Json.id; src3 = $repo.Json.id }
+    if ($pdf.status -eq 'ready' -and $url.Json.status -eq 'ready' -and $repo.Json.status -eq 'ready') { $true }
+    else { "pdf $($pdf.status), url HTTP $($url.Status) $($url.Json.status), repo HTTP $($repo.Status) $($repo.Json.status)" }
+}
+
 # The nine node types: PDF, docs link and GitHub repo sources, calculator and MCP tools, all wired to n4.
 $Sources = @(
-    @{ id = 'src1'; type = 'source_doc'; config = @{ file = 'refund-policy.pdf' }; position = @{ x = 100; y = 40 } },
-    @{ id = 'src2'; type = 'source_doc'; config = @{ url = 'https://example.com' }; position = @{ x = 300; y = 40 } },
-    @{ id = 'src3'; type = 'source_repo'; config = @{ url = 'https://github.com/octocat/Spoon-Knife' }; position = @{ x = 500; y = 40 } }
+    @{ id = 'src1'; type = 'source_doc'; config = @{ source_ref = $script:S.src1 }; position = @{ x = 100; y = 40 } },
+    @{ id = 'src2'; type = 'source_doc'; config = @{ source_ref = $script:S.src2 }; position = @{ x = 300; y = 40 } },
+    @{ id = 'src3'; type = 'source_repo'; config = @{ source_ref = $script:S.src3 }; position = @{ x = 500; y = 40 } }
 )
 $Tools = @(
     @{ id = 'tool1'; type = 'tool_calculator'; config = @{}; position = @{ x = 700; y = 40 } },
@@ -117,10 +146,7 @@ $Tools = @(
 )
 $AllExtra = $Sources + $Tools
 $AllEdges = @($AllExtra | ForEach-Object { @{ from = $_.id; to = 'n4' } })
-
-$script:ApiUp = $false
-try { $script:ApiUp = ((Invoke-Api 'GET' "$Api/health").Json.ok -eq $true) } catch { }
-$script:GraphId = 0
+$Pid8 = $script:Who.Project
 
 Write-Host "`n== Builder page"
 Test-Check 'web serves the builder bundle with React Flow, the palette and the dashboard' {
@@ -140,13 +166,13 @@ Test-Check 'frontend unit tests pass (canvas model, SSE highlighting)' {
 
 Write-Host "`n== Graph with all nine node types: validate, save, update, reload"
 Test-Check 'a canvas graph with all nine node types is valid' {
-    $r = Invoke-Api 'POST' "$Api/pipeline/validate" (ConvertTo-Json10 (New-CanvasGraph 'groq' $false $AllExtra $AllEdges))
+    $r = Invoke-Api 'POST' "$Api/pipeline/validate?project_id=$Pid8" (ConvertTo-Json10 (New-CanvasGraph 'groq' $false $AllExtra $AllEdges))
     $types = @((New-CanvasGraph 'groq' $false $AllExtra $AllEdges).nodes | ForEach-Object { $_.type } | Sort-Object -Unique)
     if ($r.Json.valid -eq $true -and $types.Count -eq 9) { $true } else { "valid=$($r.Json.valid), types=$($types.Count): $($r.Text)" }
 }
 Test-Check 'save, update and reload keep every node, edge and position' {
     $g = New-CanvasGraph 'groq' $false $AllExtra $AllEdges
-    $r = Invoke-Api 'POST' "$Api/graphs" "{`"name`":`"p6 canvas`",`"graph`":$(ConvertTo-Json10 $g)}"
+    $r = Invoke-Api 'POST' "$Api/graphs" "{`"project_id`":$Pid8,`"name`":`"p6 canvas`",`"graph`":$(ConvertTo-Json10 $g)}"
     if ($r.Status -ne 201) { return "save HTTP $($r.Status)" }
     $script:GraphId = $r.Json.id
     $g.nodes[0].position = @{ x = 11; y = 22 }  # move a node, as dragging on the canvas does
@@ -169,24 +195,23 @@ $cases = @(
 )
 foreach ($c in $cases) {
     Test-Check "error for $($c.Name) names node $($c.Node) ($($c.Code))" {
-        $r = Invoke-Api 'POST' "$Api/pipeline/validate" (ConvertTo-Json10 $c.Graph)
+        $r = Invoke-Api 'POST' "$Api/pipeline/validate?project_id=$Pid8" (ConvertTo-Json10 $c.Graph)
         $hit = @($r.Json.errors | Where-Object { $_.code -eq $c.Code -and $_.node_id -eq $c.Node -and $_.message })
         if ($r.Json.valid -eq $false -and $hit.Count -ge 1) { $true } else { "errors: $(@($r.Json.errors | ForEach-Object { "$($_.code)/$($_.node_id)" }) -join ', ')" }
     }
 }
 Test-Check 'saving a broken graph is refused with the same errors (422)' {
-    $r = Invoke-Api 'POST' "$Api/graphs" "{`"name`":`"broken`",`"graph`":$(ConvertTo-Json10 $cases[0].Graph)}"
+    $r = Invoke-Api 'POST' "$Api/graphs" "{`"project_id`":$Pid8,`"name`":`"broken`",`"graph`":$(ConvertTo-Json10 $cases[0].Graph)}"
     if ($r.Status -eq 422 -and @($r.Json.detail.errors | Where-Object { $_.node_id -eq 'src2' }).Count -ge 1) { $true } else { "HTTP $($r.Status)" }
 }
 
 Write-Host "`n== Sources on the canvas: PDF, docs link and GitHub repo in one saved graph"
-Test-Check 'PDF upload, docs link and GitHub repo are added to the saved graph''s own documents' {
+# Phase 8: sources are no longer uploaded into a graph; the saved agent links the project's sources instead.
+Test-Check 'the saved agent is linked to the PDF, docs link and GitHub repo of the project' {
     if (-not $script:GraphId) { return 'no saved graph' }
-    $pdf = Send-Pdf "$Api/sources/src1/pdf?graph_id=$($script:GraphId)" 'samples\refund-policy.pdf'
-    $url = Invoke-Api 'POST' "$Api/sources/src2/url?graph_id=$($script:GraphId)" '{"url":"https://example.com"}'
-    $repo = Invoke-Api 'POST' "$Api/sources/src3/repo?graph_id=$($script:GraphId)" '{"url":"https://github.com/octocat/Spoon-Knife"}'
-    if ($pdf -eq 201 -and $url.Status -eq 201 -and $repo.Status -eq 201 -and $url.Json.scope -eq "graph:$($script:GraphId)") { $true }
-    else { "pdf $pdf, url $($url.Status), repo $($repo.Status)" }
+    $linked = @('src1', 'src2', 'src3' | Where-Object {
+        @((Invoke-Api 'GET' "$Api/sources/$($script:S[$_])").Json.agents | ForEach-Object { $_.id }) -contains $script:GraphId })
+    if ($linked.Count -eq 3) { $true } else { "linked: $($linked -join ',')" }
 }
 Test-Check 'retrieval searches exactly the sources connected on the canvas' {
     $two = New-CanvasGraph 'groq' $false @($Sources[0], $Sources[2]) @(@{ from = 'src1'; to = 'n4' }, @{ from = 'src3'; to = 'n4' })
@@ -194,7 +219,7 @@ Test-Check 'retrieval searches exactly the sources connected on the canvas' {
     $agent = @(@($r.Json.events) | Where-Object { $_.stage -eq 'agent' -and $_.status -eq 'done' })[0].detail
     $searched = @($agent.retrieval.searched) -join ','
     $files = @($agent.retrieval.candidates | ForEach-Object { $_.source_id } | Sort-Object -Unique) -join ','
-    if ($searched -eq 'src1,src3' -and $files -notmatch 'src2' -and $agent.retrieval.scope -eq "graph:$($script:GraphId)") { $true }
+    if ($searched -eq 'src1,src3' -and $files -notmatch 'src2' -and $agent.retrieval.scope -eq "project:$Pid8") { $true }
     else { "searched=$searched, candidates from=$files, scope=$($agent.retrieval.scope)" }
 }
 
@@ -239,7 +264,7 @@ foreach ($m in @('local', 'local_small', 'gemini')) {
 }
 Test-Check 'local-only on the agent node refuses a cloud model (400)' {
     $g = New-CanvasGraph 'groq' $true
-    $r = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" "{`"question`":`"hi`",`"graph`":$(ConvertTo-Json10 $g)}"
+    $r = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" "{`"question`":`"hi`",`"project_id`":$Pid8,`"graph`":$(ConvertTo-Json10 $g)}"
     if ($r.Status -eq 400 -and $r.Json.detail -match 'Local-only') { $true } else { "HTTP $($r.Status)" }
 }
 Test-Check 'GET /models offers all four agent models' {
@@ -248,6 +273,7 @@ Test-Check 'GET /models offers all four agent models' {
 }
 
 Write-Host "`n== Usage dashboard"
+# Phase 8: usage is scoped to the signed-in account (its own workspace, where it is the owner).
 Test-Check 'dashboard data: totals, by model, by user, by day and recent answers' {
     $t = (Invoke-Api 'GET' "$Api/usage/totals").Json
     $m = @((Invoke-Api 'GET' "$Api/usage/by-model").Json)

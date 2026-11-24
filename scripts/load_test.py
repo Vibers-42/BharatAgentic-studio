@@ -27,6 +27,9 @@ from pathlib import Path
 
 import httpx
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _session import add_file, sign_up  # noqa: E402  (Phase 8: a real signed-in account)
+
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "results" / "load_test.json"
 PDF = ROOT / "samples" / "refund-policy.pdf"
@@ -147,15 +150,26 @@ def stream_run(client, body):
     return first
 
 
+ACCT = None  # the signed-in test account (Phase 8); set in main()
+PROJECT = 0  # the project of the main load-test agent
+
+
 def make_agent(c, name, model="local"):
+    """A project of its own with the PDF, and an agent whose source node points at it (Phase 8).
+    Returns (agent id, graph, project id, source id)."""
+    pid = c.post("/projects", json={"org_id": ACCT.org_id, "name": name}).json()["id"]
+    sid = add_file(ACCT, PDF, "refund-policy.pdf", pid)
     main = ["input", "guardrails", "router", "agent", "output"]
     nodes = [{"id": f"n{i + 1}", "type": t, "config": {"model": model, "language": "en"} if t == "agent" else {}}
-             for i, t in enumerate(main)] + [{"id": "s_pdf", "type": "source_doc", "config": {"file": "refund-policy.pdf"}}]
+             for i, t in enumerate(main)] + [{"id": "s_pdf", "type": "source_doc", "config": {"source_ref": sid}}]
     edges = [{"from": f"n{i}", "to": f"n{i + 1}"} for i in range(1, 5)] + [{"from": "s_pdf", "to": "n4"}]
-    gid = c.post("/graphs", json={"name": name, "graph": {"nodes": nodes, "edges": edges}}).json()["id"]
-    with open(PDF, "rb") as f:
-        c.post(f"/sources/s_pdf/pdf?graph_id={gid}", files={"file": ("refund-policy.pdf", f, "application/pdf")}).raise_for_status()
-    return gid, {"nodes": nodes, "edges": edges}
+    r = c.post("/graphs", json={"project_id": pid, "name": name, "graph": {"nodes": nodes, "edges": edges}})
+    r.raise_for_status()
+    return r.json()["id"], {"nodes": nodes, "edges": edges}, pid, sid
+
+
+def chunk_count(c, sid):
+    return c.get(f"/sources/{sid}").json()["chunk_count"]
 
 
 def compose_files():
@@ -183,8 +197,10 @@ def restart_api(env_lines, c):
 
 def part_backend(c, gid, graph):
     rows = []
-    calls = [lambda: c.get("/health"), lambda: c.get(f"/graphs/{gid}"), lambda: c.post("/pipeline/validate", json=graph),
-             lambda: c.get(f"/sources?graph_id={gid}"), lambda: c.get("/usage/totals"), lambda: c.get("/usage/by-model?days=7")]
+    pid = PROJECT
+    calls = [lambda: c.get("/health"), lambda: c.get(f"/graphs/{gid}"),
+             lambda: c.post(f"/pipeline/validate?project_id={pid}", json=graph),
+             lambda: c.get(f"/projects/{pid}/sources"), lambda: c.get("/usage/totals"), lambda: c.get("/usage/by-model?days=7")]
 
     def fn(i):
         r = random.choice(calls)()
@@ -204,7 +220,7 @@ def part_mocked(c, gid, user):
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         restart_api(["GEMINI_BASE_URL: http://host.docker.internal:8767", "GEMINI_API_KEY: fake-key"], c)
-        body = {"question": QUESTION, "graph_id": gid, "model": "gemini", "user": user}
+        body = {"question": QUESTION, "graph_id": gid, "model": "gemini"}
         for conc in (1, 5, 10, 25, 50):
             row = run_level("pipeline run, MOCKED LLM (real bge-m3 + pgvector + SSE)", conc, max(20, conc * 3),
                             lambda i: stream_run(c, body))
@@ -220,7 +236,7 @@ def part_mocked(c, gid, user):
 def part_local(c, gid, user):
     rows = []
     for model, tag, levels in (("local", "qwen3:14b", (2, 3)), ("local_small", "qwen2.5:3b", (2, 4))):
-        body = {"question": QUESTION, "graph_id": gid, "model": model, "user": user, "local_only": True}
+        body = {"question": QUESTION, "graph_id": gid, "model": model, "local_only": True}
         sh("docker", "compose", "exec", "-T", "ollama", "ollama", "stop", tag)
         time.sleep(2)
         rows.append(run_level(f"REAL {tag}: cold start (model unloaded first)", 1, 1, lambda i: stream_run(c, body)))
@@ -236,23 +252,23 @@ def part_local(c, gid, user):
 
 def part_cloud(c, gid, user):
     rows = []
-    body = {"question": QUESTION, "graph_id": gid, "model": "groq", "user": user}
+    body = {"question": QUESTION, "graph_id": gid, "model": "groq"}
     rows.append(run_level("REAL Groq gpt-oss-120b: one at a time", 1, 3, lambda i: stream_run(c, body)))
     rows.append(run_level("REAL Groq gpt-oss-120b: 3 at the same time", 3, 3, lambda i: stream_run(c, body)))
-    gem = {"question": QUESTION, "graph_id": gid, "model": "gemini", "user": user}
+    gem = {"question": QUESTION, "graph_id": gid, "model": "gemini"}
     rows.append(run_level("REAL Gemini 2.5 Flash: one request (quota permitting)", 1, 1, lambda i: stream_run(c, gem)))
     return rows
 
 
 def part_mixed(c, gid, user):
     """Uploads, 3B questions and reads at the same moment; then checks nothing was corrupted."""
-    up_gid, _ = make_agent(c, "p71 load mixed uploads")
-    before = c.get(f"/sources?graph_id={up_gid}").json()["sources"][0]["chunks"]
+    _, _, _, up_sid = make_agent(c, "p71 load mixed uploads")
+    before = chunk_count(c, up_sid)
     pdf = PDF.read_bytes()
-    body = {"question": QUESTION, "graph_id": gid, "model": "local_small", "user": user, "local_only": True}
-    jobs = ([("upload", lambda: c.post(f"/sources/s_pdf/pdf?graph_id={up_gid}", files={"file": ("refund-policy.pdf", pdf, "application/pdf")}))] * 3
+    body = {"question": QUESTION, "graph_id": gid, "model": "local_small", "local_only": True}
+    jobs = ([("upload", lambda: c.post(f"/sources/{up_sid}/file", files={"file": ("refund-policy.pdf", pdf, "application/pdf")}))] * 3
             + [("question", lambda: stream_run(c, body))] * 4
-            + [("read sources", lambda: c.get(f"/sources?graph_id={gid}"))] * 20 + [("read agent", lambda: c.get(f"/graphs/{gid}"))] * 20)
+            + [("read sources", lambda: c.get(f"/projects/{PROJECT}/sources"))] * 20 + [("read agent", lambda: c.get(f"/graphs/{gid}"))] * 20)
     random.shuffle(jobs)
     by_kind = {}
 
@@ -264,7 +280,7 @@ def part_mixed(c, gid, user):
             raise RuntimeError(f"{kind} HTTP {r.status_code}")
         by_kind.setdefault(kind, []).append((time.perf_counter() - t) * 1000)
     row = run_level("mixed: 3 uploads + 4 REAL 3B questions + 40 reads at once", len(jobs), len(jobs), fn)
-    after = c.get(f"/sources?graph_id={up_gid}").json()["sources"][0]["chunks"]
+    after = chunk_count(c, up_sid)
     row["by_kind_median_ms"] = {k: pct(v, 50) for k, v in by_kind.items()}
     row["chunks_before_after"] = [before, after]
     row["consistent"] = before == after
@@ -279,12 +295,13 @@ def main():
     ap.add_argument("--api", default="http://127.0.0.1:8000")
     ap.add_argument("--part", default="all", choices=["backend", "mocked", "local", "cloud", "mixed", "all"])
     args = ap.parse_args()
-    limits = httpx.Limits(max_connections=200, max_keepalive_connections=200)
-    c = httpx.Client(base_url=args.api, timeout=900, limits=limits)
+    global ACCT, PROJECT
+    ACCT = sign_up(args.api, "load")
+    c = httpx.Client(base_url=args.api, timeout=900, limits=httpx.Limits(max_connections=200, max_keepalive_connections=200),
+                     cookies=ACCT.client.cookies, headers={"X-CSRF-Token": ACCT.client.headers["X-CSRF-Token"]})
     stamp = time.strftime("%m%d%H%M%S")
-    user = f"p71load_{stamp}"
-    c.post("/users", json={"name": user})
-    gid, graph = make_agent(c, f"p71 load {stamp}")
+    user = ACCT.name
+    gid, graph, PROJECT, _ = make_agent(c, f"p71 load {stamp}")
     parts = ["backend", "mocked", "local", "cloud", "mixed"] if args.part == "all" else [args.part]
     results = json.loads(OUT.read_text(encoding="utf-8")) if OUT.exists() else {"runs": []}
     for p in parts:

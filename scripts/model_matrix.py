@@ -22,6 +22,9 @@ from pathlib import Path
 
 import httpx
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _session import TestAccount, add_file, add_link, sign_up  # noqa: E402  (Phase 8: a real signed-in account)
+
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "results" / "model_matrix.json"
 PROVIDER = {"gemini": "Google Gemini", "groq": "Groq", "local": "Ollama", "local_small": "Ollama"}
@@ -42,24 +45,28 @@ TESTS = [
 ]
 
 
-def build_agent(c: httpx.Client) -> int:
+def build_agent(acct: TestAccount) -> int:
+    """Phase 8: the PDF, repo and docs page are added to the account's project first; the agent's source nodes
+    point at them (source_ref)."""
+    c = acct.client
+    refs = {"s_pdf": add_file(acct, ROOT / "samples" / "refund-policy.pdf"),
+            "s_repo": add_link(acct, "repo", "https://github.com/octocat/Spoon-Knife"),
+            "s_url": add_link(acct, "url", "https://example.com")}
     main = ["input", "guardrails", "router", "agent", "output"]
     nodes = [{"id": f"n{i + 1}", "type": t, "config": {"model": "local", "language": "en"} if t == "agent" else {},
               "position": {"x": 300, "y": 140 * i}} for i, t in enumerate(main)]
-    extra = [{"id": "s_pdf", "type": "source_doc", "config": {"file": "refund-policy.pdf"}},
-             {"id": "s_repo", "type": "source_repo", "config": {"url": "https://github.com/octocat/Spoon-Knife"}},
-             {"id": "s_url", "type": "source_doc", "config": {"url": "https://example.com"}},
+    extra = [{"id": "s_pdf", "type": "source_doc", "config": {"source_ref": refs["s_pdf"]}},
+             {"id": "s_repo", "type": "source_repo", "config": {"source_ref": refs["s_repo"]}},
+             {"id": "s_url", "type": "source_doc", "config": {"source_ref": refs["s_url"]}},
              {"id": "t_calc", "type": "tool_calculator", "config": {}},
              {"id": "t_mcp", "type": "tool_mcp", "config": {"server": "orders-db", "mode": "read_only"}}]
     edges = [{"from": f"n{i}", "to": f"n{i + 1}"} for i in range(1, 5)] + [{"from": n["id"], "to": "n4"} for n in extra]
-    r = c.post("/graphs", json={"name": "phase7.1 model matrix", "graph": {"nodes": nodes + extra, "edges": edges}})
+    r = c.post("/graphs", json={"project_id": acct.project_id, "name": "phase7.1 model matrix",
+                                "graph": {"nodes": nodes + extra, "edges": edges}})
     r.raise_for_status()
     gid = r.json()["id"]
-    with open(ROOT / "samples" / "refund-policy.pdf", "rb") as f:
-        c.post(f"/sources/s_pdf/pdf?graph_id={gid}", files={"file": ("refund-policy.pdf", f, "application/pdf")}).raise_for_status()
-    c.post(f"/sources/s_repo/repo?graph_id={gid}", json={}).raise_for_status()
-    c.post(f"/sources/s_url/url?graph_id={gid}", json={}).raise_for_status()
-    held = {s["source_id"]: s["chunks"] for s in c.get(f"/sources?graph_id={gid}").json()["sources"]}
+    by_id = {s["id"]: s["chunk_count"] for s in c.get(f"/projects/{acct.project_id}/sources").json()}
+    held = {node: by_id.get(sid) for node, sid in refs.items()}
     print(f"agent #{gid}: chunks {held}", flush=True)
     return gid
 
@@ -110,8 +117,12 @@ def main():
     ap.add_argument("--models", nargs="*", default=["local", "local_small", "groq", "gemini"])
     ap.add_argument("--graph-id", type=int, help="reuse an agent made by an earlier run")
     args = ap.parse_args()
-    c = httpx.Client(base_url=args.api, timeout=900)
-    gid = args.graph_id or build_agent(c)
+    if args.graph_id:
+        sys.exit("--graph-id is not supported since Phase 8: agents belong to a signed-in account's project; "
+                 "run without it to build a fresh agent for a fresh test account.")
+    acct = sign_up(args.api, "matrix")
+    c = acct.client
+    gid = build_agent(acct)
     rows = []
     for model in args.models:
         blocked = None
@@ -120,7 +131,7 @@ def main():
                 rows.append({"test": test[0], "requested": model, "status": "BLOCKED", "error": blocked, "requests_sent": 0})
                 print(f"{model:12} {test[0]:10} BLOCKED (not sent: {blocked[:60]})", flush=True)
                 continue
-            body = {"question": test[1], "graph_id": gid, "model": model, "user": "demo", "language": test[2]}
+            body = {"question": test[1], "graph_id": gid, "model": model, "language": test[2]}
             started = time.time()
             r = c.post("/pipeline/run?stream=false", json=body)
             if r.status_code != 200:

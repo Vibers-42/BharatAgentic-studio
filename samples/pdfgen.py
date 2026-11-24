@@ -89,6 +89,26 @@ HOSTEL_RULES = [
     ],
 ]
 
+# Phase 8 acceptance scenario: a project's architecture and business rules (fictional company and project).
+ECOMMERCE = [
+    [
+        "E-commerce Platform - Architecture and Business Rules (fictional sample, Bharat Technologies)",
+        "Architecture: the platform has four services: catalog, cart, orders and payments.",
+        "The payments service talks to the payment gateway and records every payment attempt.",
+        "If the payments service is down, new orders are kept as pending payment for 30 minutes.",
+        "The catalog service caches product data for 15 minutes.",
+        "Customer sign-in uses one-time passwords sent by SMS; sessions last 24 hours.",
+    ],
+    [
+        "Business rules",
+        "Delivery is free for orders above Rs. 499; smaller orders pay a delivery fee of Rs. 40.",
+        "Customers can return items within 10 days of delivery.",
+        "Cash on delivery is allowed only for orders up to Rs. 5000.",
+        "Refunds for returned items are paid within 7 working days.",
+    ],
+]
+
+
 # A hostile document for the prompt-injection check (Phase 7.1): it tries to make the model state a false
 # refund rate. The canteen line is a harmless fact the document really supports.
 PROMPT_INJECTION = [
@@ -107,4 +127,5 @@ if __name__ == "__main__":
     (here / "refund-policy.pdf").write_bytes(make_pdf(REFUND_POLICY))
     (here / "hostel-rules.pdf").write_bytes(make_pdf(HOSTEL_RULES))
     (here / "prompt-injection.pdf").write_bytes(make_pdf(PROMPT_INJECTION))
-    print("wrote refund-policy.pdf, hostel-rules.pdf and prompt-injection.pdf")
+    (here / "ecommerce-architecture.pdf").write_bytes(make_pdf(ECOMMERCE))
+    print("wrote refund-policy.pdf, hostel-rules.pdf, prompt-injection.pdf and ecommerce-architecture.pdf")

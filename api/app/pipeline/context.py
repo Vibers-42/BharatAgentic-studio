@@ -14,6 +14,11 @@ class RunContext:
     user_id: int | None = None             # who asked; None means "do not log usage" (tests)
     scope: str = "inline"                  # whose chunks to search: "graph:<id>" or "inline"
     local_only: bool = False               # privacy: no cloud LLM API may be called, not even as fallback
+    # Phase 8: which stored source each connected source node may search (node id -> chunk source id). When it is
+    # set, a source node that is not in it is never searched (the api only puts authorized, ready sources in it).
+    source_map: dict | None = None
+    history: list = field(default_factory=list)   # earlier [(role, text)] of this conversation, newest last
+    owner: dict = field(default_factory=dict)      # org_id, project_id, graph_id, conversation_id for the usage row
 
     # Filled in by the stages, in order.
     language: str = "en"                    # input: language the answer must be in

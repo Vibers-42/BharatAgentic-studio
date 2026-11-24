@@ -25,7 +25,7 @@ const PALETTE_HINT = {
   calculator: "Exact arithmetic", mcp: "Read-only orders lookup",
 };
 
-function BuilderInner({ user }) {
+function BuilderInner({ project }) {
   const start = useMemo(() => defaultCanvas(), []);
   const flow = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState(start.nodes);
@@ -37,7 +37,8 @@ function BuilderInner({ user }) {
   const [saved, setSaved] = useState([]);
   const [models, setModels] = useState([]);
   const [tools, setTools] = useState(null);
-  const [sources, setSources] = useState({});
+  const [sources, setSources] = useState([]);   // the project's knowledge registry
+  const [meta, setMeta] = useState(null);       // the opened agent: creator, can_edit
   const [errors, setErrors] = useState(NO_ERRORS);
   const [toast, setToast] = useState(null);
   const [statuses, setStatuses] = useState({});
@@ -77,20 +78,18 @@ function BuilderInner({ user }) {
   }, [toast]);
 
   const refreshSaved = useCallback(() => {
-    api("/graphs").then(setSaved).catch(() => {});
-  }, []);
-  const refreshSources = useCallback((id) => {
-    if (!id) return setSources({});
-    return api(`/sources?graph_id=${id}`)
-      .then((d) => setSources(Object.fromEntries(d.sources.map((s) => [s.source_id, s]))))
-      .catch(() => setSources({}));
-  }, []);
+    api(`/graphs?project_id=${project.id}`).then(setSaved).catch(() => {});
+  }, [project.id]);
+  const refreshSources = useCallback(() => api(`/projects/${project.id}/sources`).then(setSources).catch(() => setSources([])),
+    [project.id]);
   useEffect(() => {
     refreshSaved();
     api("/models").then((d) => setModels(d.models)).catch(() => {});
     api("/tools").then(setTools).catch(() => setTools({ mcp_servers: [{ name: "orders-db", ok: false, error: "Cannot reach the api.", tools: [] }] }));
   }, [refreshSaved]);
-  useEffect(() => { refreshSources(graphId); }, [graphId, refreshSources]);
+  useEffect(() => { refreshSources(); }, [refreshSources]);
+  // Contributors and managers edit; viewers (and contributors on someone else's agent) open and run saved agents.
+  const canEdit = graphId ? !!meta?.can_edit : project.can_contribute;
 
   const graph = () => toGraph(nodes, edges);
   const currentJson = JSON.stringify(toGraph(nodes, edges)) + name;
@@ -98,13 +97,18 @@ function BuilderInner({ user }) {
   const modelLabel = Object.fromEntries(models.map((m) => [m.key, m.label]));
 
   // Status, validation marks, source contents and tool results are layered onto the nodes for display only.
-  const shownNodes = nodes.map((n) => ({
-    ...n,
-    data: {
-      ...n.data, status: statuses[n.id], invalid: errors.byNode[n.id], source: sources[n.id],
-      graphUnsaved: !graphId, tool: toolActivity[n.id], modelLabel: modelLabel[n.data.config.model],
-    },
-  }));
+  const byId = Object.fromEntries(sources.map((s) => [s.id, s]));
+  const shownNodes = nodes.map((n) => {
+    const src = byId[n.data.config.source_ref];
+    return {
+      ...n,
+      data: {
+        ...n.data, status: statuses[n.id], invalid: errors.byNode[n.id],
+        source: src ? { chunks: src.chunk_count, files: 1, file: src.title, file_names: [src.title], status: src.status } : null,
+        tool: toolActivity[n.id], modelLabel: modelLabel[n.data.config.model],
+      },
+    };
+  });
   const shownEdges = edgesWithActivity(edges, statuses);
   const selected = nodes.find((n) => n.id === selectedId) || null;
   const agentId = nodes.find((n) => n.data.type === "agent")?.id;
@@ -158,7 +162,7 @@ function BuilderInner({ user }) {
 
   async function validate(quiet) {
     try {
-      const data = await api("/pipeline/validate", { method: "POST", body: graph() });
+      const data = await api(`/pipeline/validate?project_id=${project.id}`, { method: "POST", body: graph() });
       setErrors(errorsByNode(data.errors || []));
       if (!quiet) say(data.valid ? "The agent is valid and ready to run." : `${data.errors.length} problem${data.errors.length > 1 ? "s" : ""} found: see the marked blocks.`, data.valid ? "ok" : "err");
       return data.valid === true;
@@ -172,13 +176,13 @@ function BuilderInner({ user }) {
     try {
       const data = graphId
         ? await api(`/graphs/${graphId}`, { method: "PUT", body: { name, graph: graph() } })
-        : await api("/graphs", { method: "POST", body: { name, graph: graph() } });
+        : await api("/graphs", { method: "POST", body: { project_id: project.id, name, graph: graph() } });
       setErrors(NO_ERRORS);
+      if (!graphId) setMeta({ can_edit: true });
       setGraphId(data.id);
       setSavedJson(currentJson);
-      say(graphId ? `Saved “${name}”.` : `Saved as agent #${data.id}. You can now add documents to its sources.`);
+      say(graphId ? `Saved “${name}”.` : `Saved as agent #${data.id} in ${project.name}. Everyone on the project can use it.`);
       refreshSaved();
-      refreshSources(data.id);
     } catch (err) {
       if (err.status === 422) {
         setErrors(errorsByNode(err.data?.detail?.errors || []));
@@ -200,8 +204,10 @@ function BuilderInner({ user }) {
   async function load(id) {
     if (!id) return;
     try {
-      const g = fromGraph(await api(`/graphs/${id}`));
-      const label = saved.find((s) => s.id === Number(id))?.name || `Agent ${id}`;
+      const raw = await api(`/graphs/${id}`);
+      const g = fromGraph(raw);
+      const label = raw.meta?.name || `Agent ${id}`;
+      setMeta(raw.meta || null);
       setNodes(g.nodes);
       setEdges(g.edges);
       setGraphId(Number(id));
@@ -222,6 +228,7 @@ function BuilderInner({ user }) {
     setNodes(g.nodes);
     setEdges(g.edges);
     setGraphId(null);
+    setMeta(null);
     setName("My agent");
     setSavedJson(null);
     setErrors(NO_ERRORS);
@@ -235,15 +242,18 @@ function BuilderInner({ user }) {
     if (busy || !question.trim()) return;
     resetRun();
     setPanel("run");
-    if (!(await validate(true))) {
+    if (canEdit && !(await validate(true))) {
       setRunError("The agent is not valid: fix the problems marked on the canvas, then run again.");
       return;
     }
     setBusy(true);
     const t0 = performance.now();
     try {
-      // The canvas graph runs as drawn; graph_id (if saved) says whose documents may be searched.
-      const body = { question, graph: graph(), user, ...(graphId ? { graph_id: graphId } : {}) };
+      // Editors run the canvas as drawn (unsaved edits included) inside this project; everyone else runs the
+      // saved agent. The api decides from its own records which sources each may search.
+      const body = canEdit
+        ? { question, graph: graph(), ...(graphId ? { graph_id: graphId } : { project_id: project.id }) }
+        : { question, graph_id: graphId };
       await runPipeline(body, (ev) => {
         if (ev.type !== "token") setLog((l) => [...l, { t: performance.now() - t0, ev }]);
         setStatuses((s) => applyEvent(s, ev));
@@ -258,7 +268,7 @@ function BuilderInner({ user }) {
           setRunTools((t) => [...t.filter((x) => !(x.pending && x.node_id === ev.node_id)), ev]);
         }
         if (ev.type === "result") setResult(ev);
-        if (ev.type === "error") setRunError(`${ev.stage}: ${ev.message}`);
+        if (ev.type === "error") setRunError(ev.code === "access_revoked" ? "Your access to this project was removed." : `${ev.stage}: ${ev.message}`);
       });
     } catch (err) {
       setRunError(err.message);
@@ -282,18 +292,19 @@ function BuilderInner({ user }) {
         <div className="builder-title">
           <input className="title-input" value={name} onChange={(e) => setName(e.target.value)} aria-label="Agent name" maxLength={80} />
           <span className={`pill ${graphId ? (dirty ? "warn" : "ok") : "idle"}`}>
-            {graphId ? (dirty ? "Unsaved changes" : `Saved · #${graphId}`) : "Not saved"}
+            {graphId ? (dirty && canEdit ? "Unsaved changes" : `Saved · #${graphId}`) : "Not saved"}
           </span>
+          {!canEdit && <span className="pill idle" title="You can run this agent; only its creator and the project managers change it.">Read only</span>}
         </div>
         <div className="builder-actions">
           <select className="select-sm" value="" onChange={(e) => load(e.target.value)} aria-label="Open a saved agent">
             <option value="">Open agent…</option>
-            {saved.map((s) => <option key={s.id} value={s.id}>#{s.id} · {s.name}</option>)}
+            {saved.map((s) => <option key={s.id} value={s.id}>#{s.id} · {s.name} ({s.created_by_name})</option>)}
           </select>
           <button className="btn ghost" onClick={startNew} title="Start a new agent"><Icon name="newfile" size={15} /> <span className="hide-sm">New</span></button>
           <button className="btn ghost" onClick={tidy} title="Tidy the layout"><Icon name="builder" size={15} /> <span className="hide-sm">Tidy</span></button>
           <button className="btn ghost" onClick={() => validate(false)} title="Check the agent for problems"><Icon name="validate" size={15} /> <span className="hide-sm">Validate</span></button>
-          <button className="btn" onClick={save} disabled={graphId && !dirty}><Icon name="save" size={15} /> {graphId ? "Save" : "Save agent"}</button>
+          <button className="btn" onClick={save} disabled={!canEdit || (graphId && !dirty)} title={canEdit ? "" : "Only the creator and project managers can save this agent"}><Icon name="save" size={15} /> {graphId ? "Save" : "Save agent"}</button>
           <button className="btn primary" onClick={openRun}><Icon name="play" size={14} /> Run</button>
         </div>
       </header>
@@ -355,11 +366,10 @@ function BuilderInner({ user }) {
           </div>
           <div className="side-panel-body">
             {panel === "inspect" ? (
-              <ConfigPanel node={selected} models={models} graphId={graphId} tools={tools}
-                sourceInfo={selected ? sources[selected.id] : null}
+              <ConfigPanel node={selected} models={models} project={project} tools={tools} sources={sources} canEdit={canEdit}
                 connected={!!selected && edges.some((e) => e.source === selected.id && e.target === agentId)}
-                onConnect={setConnected} onConfig={updateConfig} onDelete={removeSelected} onSave={save}
-                errors={selected ? errors.byNode[selected.id] : null} onChangedSources={() => refreshSources(graphId)} />
+                onConnect={setConnected} onConfig={updateConfig} onDelete={removeSelected}
+                errors={selected ? errors.byNode[selected.id] : null} onChangedSources={refreshSources} />
             ) : (
               <RunConsole question={question} setQuestion={setQuestion} onRun={run} busy={busy} log={log}
                 streamed={streamed} result={result} toolCalls={runTools} runError={runError} agentInfo={agentInfo} inputRef={questionRef} />
@@ -394,6 +404,7 @@ function PaletteItem({ kind, onAdd }) {
 }
 
 export default function Builder(props) {
+  // The canvas works inside one project (its agents and its knowledge).
   return (
     <ReactFlowProvider>
       <BuilderInner {...props} />

@@ -1,5 +1,7 @@
-"""Phase 4 against a real Postgres: users, one usage row per model answer (including fallbacks and
-failures), and the usage API by user, model and day. Models are faked; skipped without TEST_DATABASE_URL."""
+"""Phase 4 usage, under Phase 8 accounts, against a real Postgres: one usage row per model answer (including
+fallbacks and failures), attributed to the SIGNED-IN user (a user name in the request body is ignored), and the
+usage API by user, model and day, where each person sees only their own rows. Models are faked; skipped without
+TEST_DATABASE_URL."""
 
 import os
 
@@ -14,76 +16,81 @@ if DB_URL:
 
 
 @pytest.fixture(scope="module")
-def client():
+def app_client():
     from fastapi.testclient import TestClient
     from app.main import app
-
     with TestClient(app) as c:
-        c.post("/users", json={"name": "p4_alice"})
-        c.post("/users", json={"name": "p4_bob"})
         yield c
-        from app.db import get_conn
-        with get_conn() as conn:
-            conn.execute("DELETE FROM usage WHERE user_id IN (SELECT id FROM users WHERE name LIKE 'p4_%')")
-            conn.execute("DELETE FROM users WHERE name LIKE 'p4_%'")
 
 
-def ask(client, default_graph, user, model=None, question="hello there"):
-    body = {"question": question, "graph": default_graph, "user": user}
+@pytest.fixture(scope="module")
+def alice(app_client):
+    from accounts import Account
+    from app.main import app
+    return Account(app, "p4_alice")
+
+
+@pytest.fixture(scope="module")
+def bob(app_client):
+    from accounts import Account
+    from app.main import app
+    return Account(app, "p4_bob")
+
+
+def ask(acct, default_graph, model=None, question="hello there", **extra):
+    body = {"question": question, "graph": default_graph, "project_id": acct.project, **extra}
     if model:
         body["model"] = model
-    r = client.post("/pipeline/run?stream=false", json=body)
+    r = acct.post("/pipeline/run?stream=false", json=body)
     assert r.status_code == 200, r.text
     return r.json()["events"][-1]
 
 
-def latest(client, user):
-    return client.get(f"/usage/recent?user={user}&limit=1").json()[0]
+def latest(acct):
+    return acct.get("/usage/recent?limit=1").json()[0]
 
 
-def test_users_list_and_add(client):
-    names = [u["name"] for u in client.get("/users").json()]
-    assert {"demo", "p4_alice", "p4_bob"} <= set(names)
-    assert client.post("/users", json={"name": "bad name!"}).status_code == 400
-    again = client.post("/users", json={"name": "p4_alice"})  # adding twice is harmless
-    assert again.status_code == 201
+def test_usage_goes_to_the_signed_in_user_not_the_body(alice, bob, default_graph):
+    ask(alice, default_graph, "gemini", user="p4_bob")  # Phase 4 trusted this field; now it is ignored
+    assert latest(alice)["user"] == alice.name
+    assert bob.get("/usage/totals").json()["requests"] == 0
 
 
-def test_unknown_user_and_model_are_refused(client, default_graph):
-    r = client.post("/pipeline/run?stream=false", json={"question": "hi", "graph": default_graph, "user": "nobody"})
-    assert r.status_code == 400 and "Unknown user" in r.json()["detail"]
-    r = client.post("/pipeline/run?stream=false", json={"question": "hi", "graph": default_graph, "model": "gpt-9"})
+def test_unknown_model_is_refused(alice, default_graph):
+    r = alice.post("/pipeline/run?stream=false", json={"question": "hi", "graph": default_graph,
+                                                        "project_id": alice.project, "model": "gpt-9"})
     assert r.status_code == 400 and "Unknown model" in r.json()["detail"]
 
 
-def test_answer_is_logged_with_tokens_cost_and_sources(client, default_graph):
-    result = ask(client, default_graph, "p4_alice", "gemini")
-    row = latest(client, "p4_alice")
+def test_answer_is_logged_with_tokens_cost_and_sources(alice, default_graph):
+    result = ask(alice, default_graph, "gemini")
+    row = latest(alice)
     assert row["model"] == result["model"] and row["model_requested"] == "gemini" and row["status"] == "ok"
     assert (row["input_tokens"], row["output_tokens"], row["tokens_estimated"]) == (10, 2, False)
     assert row["cost_usd"] == pytest.approx(result["cost"]["usd"]) and row["cost_usd"] > 0
     assert row["cost_inr"] == pytest.approx(result["cost"]["inr"])
     assert row["sources"] == [] and row["language"] == "en" and row["response_ms"] >= 0
+    assert row["project"] == "My first project"
 
 
-def test_local_answer_costs_nothing_but_records_compute(client, default_graph):
-    result = ask(client, default_graph, "p4_alice", "local")
-    row = latest(client, "p4_alice")
+def test_local_answer_costs_nothing_but_records_compute(alice, default_graph):
+    result = ask(alice, default_graph, "local")
+    row = latest(alice)
     assert result["cost"]["api_fee"] is False and row["cost_usd"] == 0
     assert row["local_compute_ms"] == result["response_ms"]
 
 
-def test_unpriced_model_logs_null_cost(client, default_graph, monkeypatch):
+def test_unpriced_model_logs_null_cost(bob, default_graph, monkeypatch):
     import dataclasses
     from app.models import groq
     # llama-3.3-70b-versatile has no published price in prices.json
     monkeypatch.setattr(groq, "settings", dataclasses.replace(groq.settings, groq_model="llama-3.3-70b-versatile"))
-    ask(client, default_graph, "p4_bob", "groq")
-    row = latest(client, "p4_bob")
+    ask(bob, default_graph, "groq")
+    row = latest(bob)
     assert row["model"].startswith("groq:") and row["cost_usd"] is None
 
 
-def test_fallback_is_logged(client, default_graph, monkeypatch):
+def test_fallback_is_logged(bob, default_graph, monkeypatch):
     from app.models import gemini
     from app.models.base import QuotaError
 
@@ -91,12 +98,13 @@ def test_fallback_is_logged(client, default_graph, monkeypatch):
         raise QuotaError("daily", "used up")
         yield  # pragma: no cover
     monkeypatch.setattr(gemini, "stream", limited)
-    result = ask(client, default_graph, "p4_bob", "gemini")
-    row = latest(client, "p4_bob")
+    result = ask(bob, default_graph, "gemini")
+    row = latest(bob)
     assert result["model"].startswith("local:") and row["fallback_from"] == "gemini" and row["status"] == "ok"
+    assert result["fallback"]["from"] == "gemini"  # the answer reports the model that really answered
 
 
-def test_total_failure_is_logged_as_error(client, default_graph, monkeypatch):
+def test_total_failure_is_logged_as_error(bob, default_graph, monkeypatch):
     from app.models import gemini, ollama
     from app.models.base import ProviderError
 
@@ -105,41 +113,39 @@ def test_total_failure_is_logged_as_error(client, default_graph, monkeypatch):
         yield  # pragma: no cover
     monkeypatch.setattr(gemini, "stream", broken)
     monkeypatch.setattr(ollama, "stream", broken)
-    r = client.post("/pipeline/run?stream=false", json={"question": "hello there", "graph": default_graph,
-                                                         "user": "p4_bob"})
+    r = bob.post("/pipeline/run?stream=false", json={"question": "hello there", "graph": default_graph,
+                                                      "project_id": bob.project})
     assert r.json()["events"][-1]["code"] == "all_providers_failed"
-    row = latest(client, "p4_bob")
+    row = latest(bob)
     assert row["status"] == "error" and row["error_code"] == "all_providers_failed"
 
 
-def test_usage_totals_by_user_model_and_day(client):
-    alice = client.get("/usage/totals?user=p4_alice").json()
-    assert alice["requests"] == 2 and alice["cost_usd"] > 0 and alice["local_compute_ms"] >= 0
-    bob = client.get("/usage/totals?user=p4_bob").json()
-    assert bob["requests"] == 3 and bob["errors"] == 1 and bob["fallbacks"] == 2 and bob["unpriced_requests"] == 1
-
-    users = {u["user"]: u for u in client.get("/usage/by-user").json()}
-    assert users["p4_alice"]["requests"] == 2 and users["p4_bob"]["requests"] == 3
-
-    models = {m["model"]: m for m in client.get("/usage/by-model?user=p4_alice").json()}
+def test_each_person_sees_only_their_own_usage(alice, bob):
+    a = alice.get("/usage/totals").json()
+    assert a["requests"] == 3 and a["cost_usd"] > 0 and a["local_compute_ms"] >= 0 and a["everyone"] is False
+    b = bob.get("/usage/totals").json()
+    assert b["requests"] == 3 and b["errors"] == 1 and b["fallbacks"] == 2 and b["unpriced_requests"] == 1
+    assert [u["user"] for u in alice.get("/usage/by-user").json()] == [alice.name]
+    models = {m["model"]: m for m in alice.get("/usage/by-model").json()}
     assert {k.split(":")[0] for k in models} == {"gemini", "local"}
+    days = alice.get("/usage/by-day?days=7").json()
+    assert len(days) == 1 and days[0]["requests"] == 3
+    assert bob.get(f"/usage/totals?project_id={alice.project}").status_code == 404
+    assert bob.get(f"/usage/totals?org_id={alice.personal}").status_code == 404
 
-    days = client.get("/usage/by-day?user=p4_alice&days=7").json()
-    assert len(days) == 1 and days[0]["requests"] == 2
 
-
-def test_usage_filters_by_model_and_days(client):
-    only_local = client.get("/usage/totals?user=p4_alice&model=local").json()
+def test_usage_filters_by_model_and_days(alice):
+    only_local = alice.get("/usage/totals?model=local").json()
     assert only_local["requests"] == 1 and only_local["cost_usd"] == 0
-    assert client.get("/usage/totals?user=p4_alice&model=groq").json()["requests"] == 0
-    assert client.get("/usage/totals?user=p4_alice&days=1").json()["requests"] == 2
-    assert {r["model"].split(":")[0] for r in client.get("/usage/recent?user=p4_alice&model=gemini").json()} == {"gemini"}
-    assert [u["user"] for u in client.get("/usage/by-user?model=local").json()].count("p4_alice") == 1
-    assert client.get("/usage/totals?model=DROP%20TABLE").status_code == 422
+    assert alice.get("/usage/totals?model=groq").json()["requests"] == 0
+    assert alice.get("/usage/totals?days=1").json()["requests"] == 3
+    assert {r["model"].split(":")[0] for r in alice.get("/usage/recent?model=gemini").json()} == {"gemini"}
+    assert alice.get("/usage/totals?model=DROP%20TABLE").status_code == 422
+    assert alice.c.__class__(alice.c.app).get("/usage/totals").status_code == 401  # no session, no usage
 
 
-def test_models_endpoint_lists_all_four(client):
-    body = client.get("/models").json()
+def test_models_endpoint_lists_all_four(alice):
+    body = alice.get("/models").json()
     keys = {m["key"]: m for m in body["models"]}
     assert set(keys) == {"gemini", "groq", "local", "local_small"}
     for local in ("local", "local_small"):

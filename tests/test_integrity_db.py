@@ -95,7 +95,10 @@ def test_clearing_a_source_in_one_graph_keeps_the_other_graphs_copy(client):
 def test_pool_recovers_after_the_database_drops_its_connections(client):
     """A database restart kills every pooled connection; the next requests must still work."""
     import psycopg
+    from accounts import Account
     from app.db import get_conn
+    from app.main import app
+    acct = Account(app, "pool_user")  # signed in before the drop: the requests after it are what is tested
     with get_conn() as conn:  # make sure the pool holds an open connection
         conn.execute("SELECT 1")
     import time
@@ -110,21 +113,26 @@ def test_pool_recovers_after_the_database_drops_its_connections(client):
     # Each of these queries the database. A reconnect may take a moment (the Windows test server is slow to
     # accept new connections; on the Docker Postgres the first request already succeeds), but there is never
     # a bare 500: either the answer or a clear 503, and the pool recovers.
-    for path in ("/sources", "/usage/totals", "/graphs"):
-        for _ in range(4):
-            r = client.get(path)
+    for path in (f"/projects/{acct.project}/sources", "/usage/totals", f"/graphs?project_id={acct.project}"):
+        deadline = time.monotonic() + 30  # the Windows test server can take several seconds per new connection
+        while True:
+            r = acct.get(path)
             assert r.status_code in (200, 503), (path, r.status_code, r.text)
-            if r.status_code == 200:
+            if r.status_code == 200 or time.monotonic() > deadline:
                 break
+            time.sleep(0.5)
         assert r.status_code == 200, (path, r.text)
 
 
 def test_database_outage_is_a_clear_503_not_a_bare_500(client, monkeypatch):
     import psycopg
-    from app.rag import store
+    from accounts import Account
+    from app import knowledge
+    from app.main import app
+    acct = Account(app, "outage_user")
 
-    def down(scope):
+    def down(project_id):
         raise psycopg.OperationalError("connection refused")
-    monkeypatch.setattr(store, "list_sources", down)
-    r = client.get("/sources")
+    monkeypatch.setattr(knowledge, "list_sources", down)
+    r = acct.get(f"/projects/{acct.project}/sources")
     assert r.status_code == 503 and "database is not reachable" in r.json()["detail"]

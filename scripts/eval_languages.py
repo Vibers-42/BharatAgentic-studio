@@ -20,8 +20,10 @@ claim check removed every sentence); wrong language; quota-blocked; or error/fal
 
 import argparse
 import datetime
+import http.cookiejar
 import json
 import re
+import secrets
 import sys
 import time
 import urllib.error
@@ -35,31 +37,48 @@ DIGITS = str.maketrans("०१२३४५६७८९౦౧౨౩౪౫౬౭�
 SCRIPTS = {"te": (0x0C00, 0x0C7F), "hi": (0x0900, 0x097F)}
 
 
+# Phase 8: requests are made as a freshly registered test account (session cookie + CSRF token).
+OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+SESSION: dict = {"csrf": "", "project": None}
+
+
+def sign_up(label: str) -> None:
+    password = "E" + secrets.token_urlsafe(16) + "4"  # this run only; never printed or stored
+    email = f"eval-{label}-{int(time.time())}-{secrets.token_hex(3)}@example.test"
+    r = call("POST", "/auth/register", json.dumps({"full_name": f"Eval {label}", "email": email, "password": password,
+                                                  "confirm_password": password}).encode())
+    SESSION["csrf"] = r["csrf_token"]
+    org = next(w["id"] for w in call("GET", "/auth/me")["workspaces"] if w["kind"] == "personal")
+    SESSION["project"] = call("GET", f"/projects?org_id={org}")[0]["id"]
+
+
 def call(method: str, path: str, body: bytes | None = None, content_type: str = "application/json") -> dict:
-    req = urllib.request.Request(API + path, data=body, method=method, headers={"Content-Type": content_type})
+    req = urllib.request.Request(API + path, data=body, method=method,
+                                 headers={"Content-Type": content_type, "X-CSRF-Token": SESSION["csrf"]})
     try:
-        with urllib.request.urlopen(req, timeout=900) as r:
+        with OPENER.open(req, timeout=900) as r:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"{method} {path}: HTTP {exc.code} {exc.read().decode('utf-8', 'replace')[:200]}") from exc
 
 
-def upload(source_id: str, path: Path) -> dict:
+def upload(path: Path) -> dict:
     boundary = uuid.uuid4().hex
     body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{path.name}\"\r\n"
             "Content-Type: application/pdf\r\n\r\n").encode() + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
-    return call("POST", f"/sources/{source_id}/pdf", body, f"multipart/form-data; boundary={boundary}")
+    return call("POST", f"/projects/{SESSION['project']}/sources/file", body, f"multipart/form-data; boundary={boundary}")
 
 
-def graph(source_ids: list[str], model: str) -> dict:
+def graph(source_ids: dict[str, int], model: str) -> dict:
+    """source_ids: node id -> the project source it uses (Phase 8 source_ref)."""
     nodes = [{"id": "n1", "type": "input", "config": {}},
              {"id": "n2", "type": "guardrails", "config": {"block": ["empty", "abuse", "off_topic"]}},
              {"id": "n3", "type": "router", "config": {}},
              {"id": "n4", "type": "agent", "config": {"model": model, "language": "en"}},
              {"id": "n5", "type": "output", "config": {}}]
     edges = [{"from": "n1", "to": "n2"}, {"from": "n2", "to": "n3"}, {"from": "n3", "to": "n4"}, {"from": "n4", "to": "n5"}]
-    for sid in source_ids:
-        nodes.append({"id": sid, "type": "source_doc", "config": {}})
+    for sid, ref in source_ids.items():
+        nodes.append({"id": sid, "type": "source_doc", "config": {"source_ref": ref}})
         edges.append({"from": sid, "to": "n4"})
     return {"nodes": nodes, "edges": edges}
 
@@ -125,7 +144,7 @@ def main() -> int:
     ap.add_argument("--models", default="gemini,groq,local")
     ap.add_argument("--languages", default="en,te,hi")
     ap.add_argument("--delay", type=float, default=0.0, help="seconds between cloud requests (rate limits)")
-    ap.add_argument("--user", default="eval")
+    ap.add_argument("--user", default="eval", help="label of the test account this run registers")
     ap.add_argument("--report", help="rebuild eval/RESULTS.md from this saved results file; sends no requests")
     ap.add_argument("--compare", help="an older results file, to show which answers changed")
     args = ap.parse_args()
@@ -140,11 +159,12 @@ def main() -> int:
         languages = list(dict.fromkeys(r["lang"] for r in rows))
         write_markdown(saved["run"], models, languages, spec["questions"], rows, older)
         return 0
-    call("POST", "/users", json.dumps({"name": args.user}).encode())
+    sign_up(args.user)
+    sources = {}
     for sid, path in spec["sources"].items():
-        info = upload(sid, ROOT / path)
-        print(f"source {sid}: {info['file']}, {info['chunks']} chunks")
-    sources = list(spec["sources"])
+        info = upload(ROOT / path)
+        sources[sid] = info["id"]
+        print(f"source {sid}: {info['title']}, {info['chunk_count']} chunks")
     models, languages = args.models.split(","), args.languages.split(",")
 
     rows = []
@@ -156,7 +176,7 @@ def main() -> int:
                     rows.append({"model": model, "lang": lang, "id": q["id"], "verdict": "BLOCKED",
                                  "reason": f"{daily_block} (not sent)", "answer": "", "answered_by": None})
                     continue
-                body = {"question": q[lang], "graph": graph(sources, model), "model": model, "user": args.user}
+                body = {"question": q[lang], "project_id": SESSION["project"], "graph": graph(sources, model), "model": model}
                 started = time.time()
                 try:
                     events = call("POST", "/pipeline/run?stream=false", json.dumps(body).encode())["events"]

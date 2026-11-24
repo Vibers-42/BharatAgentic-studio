@@ -243,8 +243,11 @@ def test_real_server_rejects_unknown_tools(real_client):
 
 
 def test_tools_endpoint_lists_read_only_mcp_tools():
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from app.main import app
+    from app.routes import tools
+    app = FastAPI()
+    app.include_router(tools.router)  # the real app adds the session check (test_tenancy_db.py)
     body = TestClient(app).get("/tools").json()
     assert body["mcp_servers"][0]["name"] == "orders-db" and body["mcp_servers"][0]["ok"]
     assert [t["name"] for t in body["mcp_servers"][0]["tools"]] == ["get_order", "cancel_order"]

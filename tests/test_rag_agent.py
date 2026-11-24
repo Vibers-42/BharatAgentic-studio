@@ -187,3 +187,30 @@ def test_answer_in_the_right_language_is_not_flagged(monkeypatch, spy_retrieve, 
     answer_with(monkeypatch, "80 percent is refunded [1].")
     result = run(only_s1(full_graph), "lab test refund?", "en")[-1]
     assert result["language_match"] is True and result["warnings"] == []
+
+
+def test_new_topic_in_a_conversation_is_searched_on_its_own(monkeypatch):
+    """Phase 8: a short question in a conversation is searched alone and joined with the previous question;
+    the best chunks of both searches win, so an earlier topic cannot crowd out a new one."""
+    from app.pipeline.context import RunContext
+
+    pdf = Chunk(1, "s1", "ecommerce.pdf", 0, 1, "Delivery is free above Rs. 499.", 0.62)
+    readme = Chunk(2, "s2", "README.md", 0, None, "This repository is meant for practising forks.", 0.71)
+    searched = []
+
+    def fake(question, source_ids, scope="inline"):
+        searched.append(question)
+        hits = [readme] if question.startswith("What is the Spoon-Knife") else [pdf]
+        return hits, hits
+
+    monkeypatch.setattr(agent, "retrieve", fake)
+    ctx = RunContext(question="What is the Spoon-Knife repository meant for?")
+    ctx.history = [("user", "Above what order value is delivery free?"), ("assistant", "Rs. 499 [1].")]
+    relevant, candidates = agent._retrieve(ctx, ["s1", "s2"])
+    assert searched[0] == ctx.question and len(searched) == 2
+    assert [c.file_name for c in relevant] == ["README.md", "ecommerce.pdf"]
+
+    ctx.history = []
+    searched.clear()
+    agent._retrieve(ctx, ["s1", "s2"])
+    assert searched == [ctx.question]

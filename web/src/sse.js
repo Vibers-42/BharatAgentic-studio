@@ -1,11 +1,17 @@
 // Calls POST /api/pipeline/run and hands every Server-Sent Event to onEvent as it arrives.
-// EventSource only supports GET, so this reads the response stream with fetch instead.
-export async function runPipeline(body, onEvent) {
+// EventSource only supports GET, so this reads the response stream with fetch instead. The session cookie goes
+// along automatically (same origin) and the CSRF header comes from api.js.
+import { headers } from "./api.js";
+
+export async function runPipeline(body, onEvent, signal) {
   const res = await fetch("/api/pipeline/run", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    headers: headers("POST", true),
     body: JSON.stringify(body),
+    signal,
   });
+  if (res.status === 401) window.dispatchEvent(new CustomEvent("session-ended"));
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     const errors = data?.detail?.errors?.map((e) => e.message).join(" ") || "";

@@ -1,5 +1,7 @@
 """The /pipeline HTTP endpoints: validation errors, the SSE stream, and the JSON mode.
-Uses only the pipeline router, so it needs no database."""
+Uses only the pipeline router and no database: the signed-in user and the project's access record are test
+fixtures here (dependency override in this test app only). The real checks are tested against Postgres in
+test_tenancy_db.py."""
 
 import json
 
@@ -11,9 +13,17 @@ from app.routes import pipeline
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    from types import SimpleNamespace
+    from app.auth import User, current_user
     app = FastAPI()
     app.include_router(pipeline.router)
+    app.dependency_overrides[current_user] = lambda: User(1, "tester@example.test", "Tester", 1, "csrf")
+    access = SimpleNamespace(org_id=1, local_only=False, can_contribute=True, can_manage=True)
+    monkeypatch.setattr(pipeline, "require_project", lambda user, pid, need="view": access)
+    monkeypatch.setattr(pipeline, "project_access", lambda user_id, pid: access)
+    monkeypatch.setattr(pipeline, "check_sources", lambda graph, pid: [])
+    monkeypatch.setattr(pipeline, "_source_map", lambda graph, pid: {n.id: n.id for n in graph.nodes if n.type.startswith("source")})
     return TestClient(app)
 
 
@@ -43,7 +53,7 @@ def test_validate_reports_errors(client, full_graph):
 
 
 def test_run_streams_sse(client, full_graph):
-    with client.stream("POST", "/pipeline/run", json={"graph": full_graph, "question": "refund policy?"}) as r:
+    with client.stream("POST", "/pipeline/run", json={"project_id": 1, "graph": full_graph, "question": "refund policy?"}) as r:
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("text/event-stream")
         events = parse_sse(r.read().decode("utf-8"))
@@ -54,30 +64,30 @@ def test_run_streams_sse(client, full_graph):
 
 def test_run_stream_keeps_telugu_text(client, full_graph):
     with client.stream("POST", "/pipeline/run",
-                       json={"graph": full_graph, "question": "రిఫండ్ పాలసీ ఏమిటి?"}) as r:
+                       json={"project_id": 1, "graph": full_graph, "question": "రిఫండ్ పాలసీ ఏమిటి?"}) as r:
         events = parse_sse(r.read().decode("utf-8"))
     assert events[-1]["language"] == "te"
 
 
 def test_run_json_mode(client, default_graph):
-    r = client.post("/pipeline/run?stream=false", json={"graph": default_graph, "question": "hi"})
+    r = client.post("/pipeline/run?stream=false", json={"project_id": 1, "graph": default_graph, "question": "hi"})
     assert r.status_code == 200
     assert r.json()["events"][-1]["type"] == "result"
 
 
 def test_run_rejects_invalid_graph_before_streaming(client, default_graph):
     default_graph["edges"].pop()  # remove agent -> output
-    r = client.post("/pipeline/run", json={"graph": default_graph, "question": "refund policy?"})
+    r = client.post("/pipeline/run", json={"project_id": 1, "graph": default_graph, "question": "refund policy?"})
     assert r.status_code == 422
     detail = r.json()["detail"]
     assert detail["message"] == "The pipeline graph is not valid."
     assert detail["errors"][0]["code"] == "main_line_gap"
 
 
-def test_run_needs_a_graph(client, default_graph):
-    # Since Phase 6, graph + graph_id together is allowed (canvas graph, saved graph's documents);
-    # that case needs a database and is tested in test_sources_db.py.
+def test_run_needs_an_agent_a_project_or_a_conversation(client, default_graph):
+    # Phase 8: a graph alone no longer runs; it must belong to a project the user can use (see test_tenancy_db.py).
     assert client.post("/pipeline/run", json={"question": "hi"}).status_code == 400
+    assert client.post("/pipeline/run", json={"question": "hi", "graph": default_graph}).status_code == 400
 
 
 def test_malformed_graph_is_422(client):
@@ -87,19 +97,19 @@ def test_malformed_graph_is_422(client):
 
 # ---------- local-only privacy option ----------
 def test_local_only_refuses_a_cloud_model_before_running(client, default_graph):
-    r = client.post("/pipeline/run?stream=false", json={"graph": default_graph, "question": "hi", "model": "gemini",
+    r = client.post("/pipeline/run?stream=false", json={"project_id": 1, "graph": default_graph, "question": "hi", "model": "gemini",
                                                         "local_only": True})
-    assert r.status_code == 400 and "Local-only mode is on" in r.json()["detail"]
+    assert r.status_code == 400 and "local-only mode is on" in r.json()["detail"]
 
 
 def test_local_only_from_the_agent_node(client, default_graph):
     default_graph["nodes"][3]["config"].update({"model": "groq", "local_only": True})
-    r = client.post("/pipeline/run?stream=false", json={"graph": default_graph, "question": "hi"})
+    r = client.post("/pipeline/run?stream=false", json={"project_id": 1, "graph": default_graph, "question": "hi"})
     assert r.status_code == 400
 
 
 def test_local_only_with_a_local_model_runs_and_is_marked(client, default_graph):
-    r = client.post("/pipeline/run?stream=false", json={"graph": default_graph, "question": "hi there", "model": "local",
+    r = client.post("/pipeline/run?stream=false", json={"project_id": 1, "graph": default_graph, "question": "hi there", "model": "local",
                                                         "local_only": True})
     result = r.json()["events"][-1]
     assert r.status_code == 200 and result["local_only"] is True and result["model"].startswith("local:")

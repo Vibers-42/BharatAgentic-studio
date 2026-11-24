@@ -3,7 +3,8 @@
 // (?graph_id=...), with the stored chunks shown from the api. Tools: what they do, the MCP server's
 // read-only tools (listed live from the mcp-runner), and a keyboard-friendly "connect to Agent" switch.
 import Icon from "../Icon.jsx";
-import SourceCard from "../SourceCard.jsx";
+import { useState } from "react";
+import { api, upload } from "../api.js";
 import { kindOf, NODE_KINDS } from "./graphModel.js";
 
 const CHECKS = [
@@ -59,7 +60,7 @@ function McpTools({ tools }) {
   );
 }
 
-export default function ConfigPanel({ node, models, graphId, sourceInfo, tools, connected, onConnect, onConfig, onDelete, onSave, errors, onChangedSources }) {
+export default function ConfigPanel({ node, models, project, sources = [], canEdit = true, tools, connected, onConnect, onConfig, onDelete, errors, onChangedSources }) {
   if (!node) {
     return (
       <div className="empty small-empty">
@@ -131,19 +132,8 @@ export default function ConfigPanel({ node, models, graphId, sourceInfo, tools, 
       )}
 
       {(type === "source_doc" || type === "source_repo") && (
-        graphId ? (
-          <SourceCard key={`${graphId}-${node.id}`} sourceId={node.id} kind={kind} graphId={graphId}
-            info={sourceInfo} initialUrl={config.url || ""} onChanged={onChangedSources}
-            onConfig={(patch) => onConfig({ ...config, ...patch })} />
-        ) : (
-          <div className="callout">
-            <Icon name="info" size={16} />
-            <div>
-              <p>Documents belong to a saved agent, so other agents never see them.</p>
-              <button className="btn primary sm" onClick={onSave}><Icon name="save" size={14} /> Save agent</button>
-            </div>
-          </div>
-        )
+        <ProjectSource key={node.id} kind={kind} config={config} project={project} sources={sources} canEdit={canEdit}
+          onPick={(id) => onConfig({ ...config, source_ref: id })} onChangedSources={onChangedSources} />
       )}
 
       {type === "tool_mcp" && (
@@ -176,6 +166,53 @@ export default function ConfigPanel({ node, models, graphId, sourceInfo, tools, 
         <button className="btn ghost subtle-danger" onClick={onDelete}><Icon name="trash" size={14} /> Remove block</button>
       )}
       {!isExtra && <p className="muted small">Part of the fixed main line: Input → Guardrails → Router → Agent → Output.</p>}
+    </div>
+  );
+}
+
+
+// A source block points at one source of the project's knowledge (config.source_ref). Pick an existing one (it is
+// reused, not uploaded again), or add a new file or link to the project, which is then picked.
+function ProjectSource({ kind, config, project, sources, canEdit, onPick, onChangedSources }) {
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [link, setLink] = useState("");
+  const fits = sources.filter((s) => (kind === "repo" ? s.kind === "repo" : kind === "url" ? s.kind === "url" : !["url", "repo"].includes(s.kind)));
+  const current = sources.find((s) => s.id === config.source_ref);
+
+  async function add(fn, label) {
+    setBusy(label); setError("");
+    try { const r = await fn(); await onChangedSources(); onPick(r.id); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(""); }
+  }
+  return (
+    <div className="stack">
+      <label className="field">
+        <span className="field-label">Project knowledge</span>
+        <select value={config.source_ref || ""} disabled={!canEdit} onChange={(e) => onPick(e.target.value ? Number(e.target.value) : undefined)} aria-label="Project source">
+          <option value="">Choose a source…</option>
+          {fits.map((s) => <option key={s.id} value={s.id}>{s.title} ({s.status}{s.status === "ready" ? `, ${s.chunk_count} chunks` : ""})</option>)}
+        </select>
+        <span className="field-hint">{current ? `Added by ${current.uploaded_by_name}. Used by ${current.used_by_agents} saved agent(s).` : "Sources are shared by every agent and member of the project."}</span>
+      </label>
+      {canEdit && project.can_contribute && (
+        kind === "pdf" ? (
+          <label className={`dropzone${busy ? " disabled" : ""}`}>
+            <input type="file" className="sr-only" accept=".pdf,.txt,.md,.markdown,.docx,.csv,.xlsx" disabled={!!busy}
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) add(() => upload(`/projects/${project.id}/sources/file`, f), `Indexing ${f.name}`); }} />
+            <Icon name="upload" size={16} /><span><b>Add a new file</b> to the project</span>
+          </label>
+        ) : (
+          <form className="link-form" onSubmit={(e) => { e.preventDefault(); add(() => api(`/projects/${project.id}/sources/${kind}`, { method: "POST", body: { url: link.trim() } }), "Indexing"); }}>
+            <input value={link} onChange={(e) => setLink(e.target.value)} placeholder={kind === "repo" ? "https://github.com/owner/repo" : "https://docs.example.com/page"}
+              aria-label={kind === "repo" ? "GitHub repo address" : "Docs link address"} disabled={!!busy} />
+            <button className="btn" disabled={!!busy || !link.trim()}>{kind === "repo" ? "Download" : "Fetch"}</button>
+          </form>
+        )
+      )}
+      {busy && <div className="progress indeterminate" role="status"><span /><em>{busy}: reading, chunking and embedding…</em></div>}
+      {error && <p className="inline-msg err" role="alert"><Icon name="alert" size={14} /> {error}</p>}
     </div>
   );
 }

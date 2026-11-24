@@ -8,7 +8,7 @@ import Icon from "./Icon.jsx";
 
 function costText(cost) {
   if (!cost) return null;
-  if (!cost.api_fee) return `No API cost · ${secs(cost.local_compute_ms)} local compute`;
+  if (!cost.api_fee) return cost.local_compute_ms == null ? "No API cost" : `No API cost · ${secs(cost.local_compute_ms)} local compute`;
   if (!cost.priced) return "No published price";
   return `${inr(cost.inr)} est. (${usd(cost.usd)})`;
 }
@@ -117,7 +117,7 @@ export default function AnswerCard({ streamed, result, busy, toolCalls }) {
         )}
         {result.cost && <span className="pill">{costText(result.cost)}</span>}
         {result.response_ms !== null && result.response_ms !== undefined && <span className="pill"><Icon name="clock" size={12} /> {secs(result.response_ms)}</span>}
-        <span className="pill">{{ en: "English", te: "తెలుగు", hi: "हिन्दी" }[result.language] || result.language}</span>
+        {result.language && <span className="pill">{{ en: "English", te: "తెలుగు", hi: "हिन्दी" }[result.language] || result.language}</span>}
       </div>
 
       {result.model_note && <p className="note">{result.model_note}</p>}

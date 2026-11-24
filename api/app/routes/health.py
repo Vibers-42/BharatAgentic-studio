@@ -5,7 +5,9 @@ import socket
 import urllib.request
 from urllib.parse import urlparse
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from ..auth import User, current_user
 
 from ..config import settings
 from ..db import get_conn
@@ -48,7 +50,7 @@ def _check_port(url: str) -> bool:
 
 
 @router.get("/status")
-def status():
+def status(user: User = Depends(current_user)):
     pgvector = _pgvector_version()
     return {
         "api": True,

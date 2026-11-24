@@ -1,0 +1,62 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+2 0 obj
+<< /Length 564 >>
+stream
+BT
+/F1 11 Tf
+14 TL
+50 790 Td
+(E-commerce Platform - Architecture and Business Rules \(fictional sample, Bharat Technologies\)) Tj T*
+(Architecture: the platform has four services: catalog, cart, orders and payments.) Tj T*
+(The payments service talks to the payment gateway and records every payment attempt.) Tj T*
+(If the payments service is down, new orders are kept as pending payment for 30 minutes.) Tj T*
+(The catalog service caches product data for 15 minutes.) Tj T*
+(Customer sign-in uses one-time passwords sent by SMS; sessions last 24 hours.) Tj T*
+ET
+endstream
+endobj
+3 0 obj
+<< /Type /Page /Parent 6 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 2 0 R >>
+endobj
+4 0 obj
+<< /Length 348 >>
+stream
+BT
+/F1 11 Tf
+14 TL
+50 790 Td
+(Business rules) Tj T*
+(Delivery is free for orders above Rs. 499; smaller orders pay a delivery fee of Rs. 40.) Tj T*
+(Customers can return items within 10 days of delivery.) Tj T*
+(Cash on delivery is allowed only for orders up to Rs. 5000.) Tj T*
+(Refunds for returned items are paid within 7 working days.) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 6 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>
+endobj
+7 0 obj
+<< /Type /Catalog /Pages 6 0 R >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000106 00000 n 
+0000000721 00000 n 
+0000000847 00000 n 
+0000001246 00000 n 
+0000001372 00000 n 
+0000001435 00000 n 
+trailer
+<< /Size 8 /Root 7 0 R >>
+startxref
+1484
+%%EOF

@@ -20,16 +20,24 @@ def client():
     from fastapi.testclient import TestClient
     from app.main import app
 
-    with TestClient(app) as c:  # runs startup: schema.sql + pool
+    with TestClient(app) as c:  # runs startup: schema.sql + migrations + pool
         yield c
+
+
+@pytest.fixture(scope="module")
+def owner(client):
+    from accounts import Account
+    from app.main import app
+    return Account(app, "api_owner")
 
 
 def test_health(client):
     assert client.get("/health").json() == {"ok": True}
 
 
-def test_status_reports_db_and_pgvector(client):
-    body = client.get("/status").json()
+def test_status_needs_a_session_and_reports_db_and_pgvector(client, owner):
+    assert client.get("/status").status_code == 401  # Phase 8: only /health is public
+    body = owner.get("/status").json()
     assert body["api"] is True
     assert body["db"] is True
     assert body["pgvector"]
@@ -65,28 +73,36 @@ def test_vector_column_round_trip(client):
     assert row[1] == pytest.approx(0.0)
 
 
-def test_save_load_and_run_saved_graph(client, full_graph):
-    r = client.post("/graphs", json={"name": "test pipeline", "graph": full_graph})
-    assert r.status_code == 201
+def test_save_load_and_run_saved_graph(owner, full_graph, monkeypatch):
+    from accounts import fake_embeddings
+    from pdfgen import REFUND_POLICY, make_pdf
+    fake_embeddings(monkeypatch)
+    sid = owner.add_pdf(owner.project, "refund-policy.pdf", make_pdf(REFUND_POLICY)).json()["id"]
+    for n in full_graph["nodes"]:  # Phase 8: source nodes point at the project's sources
+        if n["type"].startswith("source"):
+            n["config"]["source_ref"] = sid
+    r = owner.post("/graphs", json={"project_id": owner.project, "name": "test pipeline", "graph": full_graph})
+    assert r.status_code == 201, r.text
     graph_id = r.json()["id"]
 
-    assert client.get(f"/graphs/{graph_id}").json() == full_graph  # "from" keys survive the round trip
-    assert any(g["id"] == graph_id for g in client.get("/graphs").json())
+    loaded = owner.get(f"/graphs/{graph_id}").json()
+    assert {k: loaded[k] for k in ("nodes", "edges")} == full_graph  # "from" keys survive the round trip
+    assert any(g["id"] == graph_id for g in owner.get(f"/graphs?project_id={owner.project}").json())
 
-    run = client.post("/pipeline/run?stream=false", json={"graph_id": graph_id, "question": "refund policy?"})
+    run = owner.post("/pipeline/run?stream=false", json={"graph_id": graph_id, "question": "refund policy?"})
     assert run.json()["events"][-1]["sources"] == ["s1", "s2"]
 
 
-def test_invalid_graph_is_not_saved(client, full_graph):
+def test_invalid_graph_is_not_saved(owner, full_graph):
     full_graph["edges"] = [e for e in full_graph["edges"] if e["from"] != "t1"]
-    r = client.post("/graphs", json={"name": "broken", "graph": full_graph})
+    r = owner.post("/graphs", json={"project_id": owner.project, "name": "broken", "graph": full_graph})
     assert r.status_code == 422
     assert r.json()["detail"]["errors"][0]["node_id"] == "t1"
 
 
-def test_unknown_graph_id_is_404(client):
-    assert client.get("/graphs/999999").status_code == 404
-    r = client.post("/pipeline/run", json={"graph_id": 999999, "question": "hi"})
+def test_unknown_graph_id_is_404(owner):
+    assert owner.get("/graphs/999999").status_code == 404
+    r = owner.post("/pipeline/run", json={"graph_id": 999999, "question": "hi"})
     assert r.status_code == 404
 
 

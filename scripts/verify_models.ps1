@@ -75,7 +75,11 @@ function Send-Pdf([string]$SourceId, [string]$Path) {
     $file = [System.Net.Http.ByteArrayContent]::new([System.IO.File]::ReadAllBytes((Resolve-Path $Path)))
     $file.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse('application/pdf')
     $form.Add($file, 'file', (Split-Path $Path -Leaf))
-    $res = $script:Http.PostAsync("$Api/sources/$SourceId/pdf", $form).GetAwaiter().GetResult()
+    # Phase 8: the file goes into the signed-in account's project; the graph's node points at it with source_ref.
+    $res = $script:Http.PostAsync("$Api/projects/$($script:Who.Project)/sources/file", $form).GetAwaiter().GetResult()
+    if ([int]$res.StatusCode -eq 201) {
+        $script:SrcRef = ([System.Text.Encoding]::UTF8.GetString($res.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()) | ConvertFrom-Json).id
+    }
     [int]$res.StatusCode
 }
 
@@ -90,12 +94,12 @@ function New-Body([string]$QuestionJson, [string]$Model, [bool]$LocalOnly = $fal
     $graph = @{
         nodes = @(@{ id = 'n1'; type = 'input'; config = @{} }, @{ id = 'n2'; type = 'guardrails'; config = @{} },
                   @{ id = 'n3'; type = 'router'; config = @{} }, @{ id = 'n4'; type = 'agent'; config = $agent },
-                  @{ id = 'n5'; type = 'output'; config = @{} }, @{ id = 'pm_refund'; type = 'source_doc'; config = @{} })
+                  @{ id = 'n5'; type = 'output'; config = @{} }, @{ id = 'pm_refund'; type = 'source_doc'; config = @{ source_ref = $script:SrcRef } })
         edges = @(@{ from = 'n1'; to = 'n2' }, @{ from = 'n2'; to = 'n3' }, @{ from = 'n3'; to = 'n4' },
                   @{ from = 'n4'; to = 'n5' }, @{ from = 'pm_refund'; to = 'n4' })
     }
     $lo = if ($LocalOnly) { 'true' } else { 'false' }
-    "{`"question`":$QuestionJson,`"model`":`"$Model`",`"user`":`"demo`",`"local_only`":$lo,`"graph`":$($graph | ConvertTo-Json -Depth 10 -Compress)}"
+    "{`"question`":$QuestionJson,`"model`":`"$Model`",`"local_only`":$lo,`"project_id`":$($script:Who.Project),`"graph`":$($graph | ConvertTo-Json -Depth 10 -Compress)}"
 }
 
 function Invoke-Run([string]$QuestionJson, [string]$Model, [bool]$LocalOnly = $false) {
@@ -149,6 +153,13 @@ $TeluguLetters = '[{0}-{1}]' -f [char]0x0C00, [char]0x0C7F
 
 $script:ApiUp = $false
 try { $script:ApiUp = ((Invoke-Api 'GET' "$Api/health").Json.ok -eq $true) } catch { }
+$script:SrcRef = 0
+if ($script:ApiUp) {
+    # Phase 8: a fresh test account (real registration, own session and CSRF token) replaces the open "demo" user.
+    . "$PSScriptRoot\_session.ps1"
+    $script:Who = New-TestSession 'models'
+    $script:Http = $script:Who.Http
+}
 $models = $null
 try { $models = (Invoke-Api 'GET' "$Api/models").Json } catch { }
 $ids = @{}
@@ -207,7 +218,7 @@ try {
         $true
     }
     Test-Check 'answers are logged per model with zero cost for local ones' {
-        $rows = @((Invoke-Api 'GET' "$Api/usage/recent?user=demo&limit=10").Json)
+        $rows = @((Invoke-Api 'GET' "$Api/usage/recent?limit=10").Json)
         $local = @($rows | Where-Object { $_.model -eq "local:$($ids['local'])" })[0]
         if ($local -and $local.cost_usd -eq 0 -and $local.local_compute_ms -gt 0 -and $local.output_tokens -gt 0) { $true }
         else { "no zero-cost row for local:$($ids['local'])" }

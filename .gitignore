@@ -20,3 +20,7 @@ uploads/
 .idea/
 .DS_Store
 backups/
+
+# verification run logs (scripts/verify_all.ps1)
+docs/results/verify-*/
+docs/results/.load-override.yml

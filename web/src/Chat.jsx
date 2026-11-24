@@ -1,271 +1,235 @@
-// Chat: talk to an agent. "Quick chat" uses the quick-chat sources (managed on the Knowledge page) and the
-// tools you switch on here; or pick an agent saved in the Builder and it runs exactly as drawn, over its
-// own documents. Each answer streams in from the real pipeline events, with the five stages, tool calls,
-// citations, the model, tokens and estimated cost.
-import { useEffect, useRef, useState } from "react";
+// Project chat. Ask the project's knowledge directly (every ready source of the project) or one of its shared
+// agents. Conversations are saved by the api, are private to you, and a follow-up question sees the last few
+// messages. The answer streams in from the real pipeline events; the stored message keeps the model that really
+// answered, citations, tool calls, tokens and cost. A local-only project only offers local models (and the api
+// refuses cloud models for it anyway).
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
+import { useConfirm } from "./App.jsx";
 import AnswerCard from "./AnswerCard.jsx";
-import { buildGraph, SOURCES, STAGES, TOOLS } from "./graph.js";
+import { STAGES } from "./graph.js";
 import Icon from "./Icon.jsx";
 import { runPipeline } from "./sse.js";
 
-const LANGUAGES = [
-  ["", "Auto language"],
-  ["en", "English"],
-  ["te", "తెలుగు · Telugu"],
-  ["hi", "हिन्दी · Hindi"],
-];
-
-const SUGGESTIONS = [
-  "What is the refund policy?",
-  "My lab test cost Rs. 1200 and I cancelled before the sample was collected. How much will I get back?",
-  "What is the status of order ORD-1002?",
-  "రీఫండ్ పాలసీ ఏమిటి?",
-  "रिफंड नीति क्या है?",
-];
-
-const STATUS_WORD = { running: "running", done: "done", blocked: "blocked", skipped: "skipped", error: "failed" };
+const LANGUAGES = [["", "Auto language"], ["en", "English"], ["te", "తెలుగు · Telugu"], ["hi", "हिन्दी · Hindi"]];
 
 function Stepper({ stages }) {
   return (
     <ol className="stepper" aria-label="Pipeline stages">
-      {STAGES.map(([id, stage, label]) => {
-        const s = stages[stage];
-        return (
-          <li key={id} className={`step ${s || "idle"}`} data-node={id} title={s ? `${label}: ${STATUS_WORD[s] || s}` : label}>
-            <i />{label}
-          </li>
-        );
-      })}
+      {STAGES.map(([id, stage, label]) => <li key={id} className={`step ${stages[stage] || "idle"}`}><i />{label}</li>)}
     </ol>
   );
 }
 
-function Turn({ turn }) {
-  return (
-    <div className="turn">
-      <div className="msg user"><div className="bubble">{turn.question}</div></div>
-      <div className="msg bot">
-        <span className="avatar"><Icon name="agent" size={16} /></span>
-        <div className="bot-body">
-          <div className="bot-head">
-            <strong>{turn.agentName}</strong>
-            <Stepper stages={turn.stages} />
-          </div>
-          {turn.notices.map((n) => <p key={n} className="note warn"><Icon name="alert" size={13} /> {n}</p>)}
-          {turn.error && <p className="inline-msg err" role="alert"><Icon name="alert" size={14} /> {turn.error}</p>}
-          {!turn.error || turn.result ? (
-            <AnswerCard streamed={turn.streamed} result={turn.result} busy={turn.busy} toolCalls={turn.tools} />
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
+// A stored assistant message in the shape AnswerCard shows.
+function asResult(m) {
+  const local = (m.model || "").startsWith("local");
+  return {
+    answer: m.content, citations: m.citations || [], tool_calls: m.tool_calls || [], model: m.model, fallback: m.fallback,
+    supported: (m.citations || []).length > 0, grounded: true, blocked: false,
+    usage: m.input_tokens != null ? { input_tokens: m.input_tokens, output_tokens: m.output_tokens } : null,
+    cost: m.model ? { usd: m.cost_usd, inr: m.cost_inr, priced: m.cost_usd != null, api_fee: !local, local_compute_ms: null } : null,
+  };
 }
 
-function Toggle({ on, onChange, icon, label, detail, disabled }) {
-  return (
-    <label className={`toggle-card${on ? " on" : ""}${disabled ? " disabled" : ""}`}>
-      <span className="chip-icon"><Icon name={icon} size={15} /></span>
-      <span className="toggle-text"><strong>{label}</strong><span className="muted small">{detail}</span></span>
-      <input type="checkbox" role="switch" className="switch" checked={on} disabled={disabled} onChange={(e) => onChange(e.target.checked)} aria-label={`Use ${label}`} />
-    </label>
-  );
+function uuid() {
+  return (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
 }
 
-export default function Chat({ user, go }) {
+export default function Chat({ project }) {
+  const [agents, setAgents] = useState([]);
+  const [agentId, setAgentId] = useState("");     // "" = project knowledge chat
   const [models, setModels] = useState([]);
   const [model, setModel] = useState("local");
   const [language, setLanguage] = useState("");
-  const [localOnly, setLocalOnly] = useState(false);
-  const [serverLocalOnly, setServerLocalOnly] = useState(false);
-  const [agents, setAgents] = useState([]);
-  const [agentId, setAgentId] = useState("");          // "" = quick chat
-  const [agentGraph, setAgentGraph] = useState(null);
-  const [sourceInfo, setSourceInfo] = useState({});
-  const [useSource, setUseSource] = useState({ chat_pdf: true, chat_repo: true, chat_url: true });
-  const [useTool, setUseTool] = useState({ chat_calc: true, chat_orders: false });
+  const [localOnly, setLocalOnly] = useState(project.local_only);
+  const [convs, setConvs] = useState(null);
+  const [active, setActive] = useState(null);     // conversation with messages
+  const [live, setLive] = useState(null);         // the answer being streamed
   const [question, setQuestion] = useState("");
-  const [turns, setTurns] = useState([]);
-  const [panelOpen, setPanelOpen] = useState(false);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(null);
+  const [ask, dialog] = useConfirm();
   const endRef = useRef(null);
-  const busy = turns.some((t) => t.busy);
+  const abortRef = useRef(null);
 
+  const loadConvs = useCallback(() => api(`/conversations?project_id=${project.id}`).then(setConvs).catch(() => setConvs([])), [project.id]);
   useEffect(() => {
+    loadConvs();
+    api(`/graphs?project_id=${project.id}`).then(setAgents).catch(() => setAgents([]));
     api("/models").then((d) => {
       setModels(d.models);
-      const firstReady = d.models.find((m) => m.ready && m.key === "local") || d.models.find((m) => m.ready);
-      if (firstReady) setModel(firstReady.key);
-      if (d.local_only) {
-        setServerLocalOnly(true);
-        setLocalOnly(true);
-        setModel("local");
-      }
+      if (d.local_only) setLocalOnly(true);
     }).catch(() => {});
-    api("/graphs").then(setAgents).catch(() => {});
-  }, []);
+    return () => abortRef.current?.abort();
+  }, [project.id, loadConvs]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [active, live]);
 
-  // What the chosen agent can use, and what each of its sources holds (from the api).
-  useEffect(() => {
-    setAgentGraph(null);
-    const scope = agentId ? `?graph_id=${agentId}` : "";
-    api(`/sources${scope}`).then((d) => setSourceInfo(Object.fromEntries(d.sources.map((s) => [s.source_id, s])))).catch(() => setSourceInfo({}));
-    if (agentId) {
-      api(`/graphs/${agentId}`).then((g) => {
-        setAgentGraph(g);
-        const agentNode = g.nodes.find((n) => n.type === "agent");
-        if (agentNode?.config.model && !(localOnly && !models.find((m) => m.key === agentNode.config.model)?.local)) setModel(agentNode.config.model);
-      }).catch(() => {});
-    }
-  }, [agentId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const forcedLocal = project.local_only;
+  const offLocal = forcedLocal || localOnly;
+  const visibleModels = models.filter((m) => !offLocal || m.local);
+  useEffect(() => { if (offLocal && !models.find((m) => m.key === model)?.local) setModel("local"); }, [offLocal, models, model]);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [turns]);
-
-  const patch = (id, fn) => setTurns((ts) => ts.map((t) => (t.id === id ? { ...t, ...fn(t) } : t)));
-  const agentName = agentId ? agents.find((a) => String(a.id) === String(agentId))?.name || `Agent #${agentId}` : "Quick chat";
-
-  async function ask(text) {
-    const q = (text ?? question).trim();
-    if (!q || busy) return;
-    setQuestion("");
-    const id = Date.now();
-    setTurns((ts) => [...ts, { id, question: q, agentName, stages: {}, streamed: "", result: null, error: "", notices: [], tools: [], busy: true }]);
-
-    let body;
-    if (agentId) {
-      body = { question: q, graph_id: Number(agentId), model, language: language || null, user, local_only: localOnly };
-    } else {
-      const sources = SOURCES.filter((s) => sourceInfo[s.id]).map((s) => ({
-        id: s.id, type: s.type, connected: useSource[s.id],
-        config: s.kind === "pdf" ? { file: sourceInfo[s.id].file } : s.kind === "url" ? { url: "" } : {},
-      }));
-      const tools = TOOLS.map((t) => ({ ...t, connected: useTool[t.id] }));
-      body = { question: q, language: language || null, graph: buildGraph({ sources, tools, language, model }), model, user, local_only: localOnly };
-    }
+  async function openConv(id) {
+    setError("");
     try {
-      await runPipeline(body, (ev) => {
-        if (ev.type === "stage") patch(id, (t) => ({ stages: { ...t.stages, [ev.stage]: ev.status } }));
-        if (ev.type === "token") patch(id, (t) => ({ streamed: t.streamed + ev.text }));
-        if (ev.type === "token_reset") patch(id, (t) => ({ streamed: "", notices: [...t.notices, `${ev.model} stopped mid-answer (${ev.code}); its partial text was discarded.`] }));
-        if (ev.type === "fallback") patch(id, (t) => ({ notices: [...t.notices, `${ev.from} failed (${ev.code}), so ${ev.to} is answering instead.`] }));
-        if (ev.type === "tool_call") patch(id, (t) => ({ tools: [...t.tools, { node_id: ev.node_id, tool: ev.tool, args: ev.args, pending: true }] }));
-        if (ev.type === "tool_result") patch(id, (t) => ({ tools: [...t.tools.filter((x) => !(x.pending && x.node_id === ev.node_id)), ev] }));
-        if (ev.type === "result") patch(id, () => ({ result: ev }));
-        if (ev.type === "error") {
-          const quota = ev.code?.startsWith("quota_") ? "Model quota reached. " : "";
-          const all = ev.code === "all_providers_failed" ? "No model could answer. " : "";
-          patch(id, (t) => ({ error: `${all}${quota}${ev.message}`, stages: { ...t.stages, [ev.stage]: "error" } }));
-        }
-      });
-    } catch (err) {
-      patch(id, () => ({ error: err.message }));
-    } finally {
-      patch(id, () => ({ busy: false }));
-    }
+      const c = await api(`/conversations/${id}`);
+      setActive(c);
+      setAgentId(c.graph_id ? String(c.graph_id) : "");
+    } catch (err) { setError(err.message); }
   }
 
-  const visibleModels = (models.length ? models : [{ key: "local", label: "Qwen 3 14B", local: true, ready: true }]).filter((m) => !localOnly || m.local);
-  const agentSources = agentGraph ? agentGraph.nodes.filter((n) => n.type.startsWith("source_")) : [];
-  const agentTools = agentGraph ? agentGraph.nodes.filter((n) => n.type.startsWith("tool_")) : [];
-  const linked = (id) => agentGraph?.edges.some((e) => e.from === id && e.to === agentGraph.nodes.find((n) => n.type === "agent")?.id);
+  function newConv() { setActive(null); setLive(null); setError(""); }
+
+  async function send(text) {
+    const q = (text ?? question).trim();
+    if (!q || live?.busy) return;
+    setQuestion(""); setError("");
+    let conv = active;
+    try {
+      if (!conv) {
+        const created = await api("/conversations", { method: "POST", body: { project_id: project.id, graph_id: agentId ? Number(agentId) : null, title: q.slice(0, 80) } });
+        conv = { ...created, messages: [] };
+        setActive(conv);
+        loadConvs();
+      }
+    } catch (err) { setError(err.message); return; }
+    const turn = { question: q, stages: {}, streamed: "", result: null, tools: [], notices: [], busy: true, error: "" };
+    setLive(turn);
+    const patch = (fn) => setLive((t) => (t ? { ...t, ...fn(t) } : t));
+    abortRef.current = new AbortController();
+    try {
+      await runPipeline({ question: q, conversation_id: conv.id, request_id: uuid(), model, language: language || null, local_only: offLocal }, (ev) => {
+        if (ev.type === "stage") patch((t) => ({ stages: { ...t.stages, [ev.stage]: ev.status } }));
+        if (ev.type === "token") patch((t) => ({ streamed: t.streamed + ev.text }));
+        if (ev.type === "token_reset") patch((t) => ({ streamed: "", notices: [...t.notices, `${ev.model} stopped mid-answer; its partial text was discarded.`] }));
+        if (ev.type === "fallback") patch((t) => ({ notices: [...t.notices, `${ev.from} failed (${ev.code}), so ${ev.to} answered instead.`] }));
+        if (ev.type === "tool_call") patch((t) => ({ tools: [...t.tools, { node_id: ev.node_id, tool: ev.tool, args: ev.args, pending: true }] }));
+        if (ev.type === "tool_result") patch((t) => ({ tools: [...t.tools.filter((x) => !(x.pending && x.node_id === ev.node_id)), ev] }));
+        if (ev.type === "result") patch(() => ({ result: ev }));
+        if (ev.type === "error") patch(() => ({ error: ev.code === "access_revoked" ? "Your access to this project was removed." : `${ev.code === "all_providers_failed" ? "No model could answer. " : ""}${ev.message}` }));
+      }, abortRef.current.signal);
+    } catch (err) {
+      if (err.name !== "AbortError") patch(() => ({ error: err.message }));
+    }
+    patch(() => ({ busy: false }));
+    try { setActive(await api(`/conversations/${conv.id}`)); setLive(null); loadConvs(); } catch { /* keep the live view */ }
+  }
+
+  const agent = agents.find((a) => String(a.id) === agentId);
+  const copy = (text, id) => navigator.clipboard?.writeText(text).then(() => { setCopied(id); setTimeout(() => setCopied(null), 1500); });
+  const messages = active?.messages || [];
+  const pairs = [];
+  for (let i = 0; i < messages.length; i += 1) {
+    if (messages[i].role === "user") pairs.push({ q: messages[i], a: messages[i + 1]?.role === "assistant" ? messages[i + 1] : null });
+  }
 
   return (
-    <section className="chat-page">
+    <section className="chat-page with-history">
+      <aside className="conv-list" aria-label="Conversations">
+        <button className="btn primary" onClick={newConv}><Icon name="plus" size={15} /> New conversation</button>
+        <div className="section-label">Your conversations in {project.name}</div>
+        {convs === null ? <div className="skeleton-line" /> : convs.length === 0 ? <p className="muted small">None yet.</p> : (
+          <ul className="list">
+            {convs.map((c) => (
+              <li key={c.id} className={`conv-item${active?.id === c.id ? " on" : ""}`}>
+                <button className="list-btn" onClick={() => openConv(c.id)}><span><strong>{c.title}</strong>
+                  <span className="muted small block">{c.graph_id ? agents.find((a) => a.id === c.graph_id)?.name || "agent" : "project knowledge"} · {new Date(c.updated_at).toLocaleDateString("en-IN")}</span></span></button>
+                <span className="conv-actions">
+                  <button className="btn ghost icon-btn sm" aria-label="Rename" title="Rename" onClick={async () => {
+                    const t = window.prompt("New title", c.title);
+                    if (t?.trim()) { await api(`/conversations/${c.id}`, { method: "PATCH", body: { title: t } }); loadConvs(); }
+                  }}><Icon name="newfile" size={13} /></button>
+                  <button className="btn ghost icon-btn sm" aria-label="Delete" title="Delete" onClick={() => ask(`Delete the conversation "${c.title}"?`, async () => {
+                    await api(`/conversations/${c.id}`, { method: "DELETE" }); if (active?.id === c.id) newConv(); loadConvs();
+                  })}><Icon name="trash" size={13} /></button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </aside>
+
       <div className="chat-main">
         <header className="chat-bar">
-          <select value={agentId} onChange={(e) => setAgentId(e.target.value)} aria-label="Agent" className="select-agent">
-            <option value="">Quick chat</option>
-            {agents.map((a) => <option key={a.id} value={a.id}>#{a.id} · {a.name}</option>)}
+          <select value={agentId} onChange={(e) => { setAgentId(e.target.value); newConv(); }} aria-label="Ask" className="select-agent" disabled={!!active}>
+            <option value="">Project knowledge (all ready sources)</option>
+            {agents.map((a) => <option key={a.id} value={a.id}>Agent: {a.name}</option>)}
           </select>
           <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model">
-            {visibleModels.map((m) => (
+            {(visibleModels.length ? visibleModels : [{ key: "local", label: "Qwen 3 14B (local)", local: true, ready: true }]).map((m) => (
               <option key={m.key} value={m.key}>{m.label}{m.local ? "" : " · cloud"}{m.ready ? "" : " (not set up)"}</option>
             ))}
           </select>
           <select value={language} onChange={(e) => setLanguage(e.target.value)} aria-label="Answer language">
             {LANGUAGES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
           </select>
-          <label className={`privacy-switch${localOnly ? " on" : ""}`} title="Only models running on this computer; nothing is sent to a cloud AI, not even as fallback">
-            <input type="checkbox" role="switch" className="switch" checked={localOnly} disabled={serverLocalOnly}
-              onChange={(e) => {
-                setLocalOnly(e.target.checked);
-                if (e.target.checked && !models.find((m) => m.key === model)?.local) setModel("local");
-              }} />
-            <Icon name="lock" size={14} /> Local only
+          <label className={`privacy-switch${offLocal ? " on" : ""}`} title={forcedLocal ? "This project is local-only" : "Only models on this computer"}>
+            <input type="checkbox" role="switch" className="switch" checked={offLocal} disabled={forcedLocal} onChange={(e) => setLocalOnly(e.target.checked)} />
+            <Icon name="lock" size={14} /> {forcedLocal ? "Local-only project" : "Local only"}
           </label>
-          <button className="btn ghost sm show-md" onClick={() => setPanelOpen((o) => !o)} aria-expanded={panelOpen}>
-            <Icon name="knowledge" size={14} /> Sources & tools
-          </button>
         </header>
 
         <div className="messages" aria-live="polite">
-          {turns.length === 0 ? (
+          {!active && !live ? (
             <div className="empty chat-empty">
               <span className="hero-icon"><Icon name="sparkle" size={28} /></span>
-              <h2>Ask {agentName === "Quick chat" ? "your documents" : agentName}</h2>
-              <p className="muted">Answers come only from connected sources and tools, with citations you can check. Ask in English, తెలుగు or हिन्दी.</p>
+              <h2>Ask {agent ? agent.name : `about ${project.name}`}</h2>
+              <p className="muted">Answers come only from {agent ? "this agent's sources and tools" : "this project's ready knowledge"}, with citations you can check. Ask in English, తెలుగు or हिन्दी.</p>
               <div className="suggestions">
-                {SUGGESTIONS.map((s) => <button key={s} className="suggestion" onClick={() => ask(s)} disabled={busy}>{s}</button>)}
+                {["What is this project about?", "Summarise the main rules in the documents.", "Which file should I read first?"].map((s) => (
+                  <button key={s} className="suggestion" onClick={() => send(s)}>{s}</button>
+                ))}
               </div>
             </div>
-          ) : turns.map((t) => <Turn key={t.id} turn={t} />)}
+          ) : (
+            <>
+              {pairs.map(({ q, a }) => (
+                <div className="turn" key={q.id}>
+                  <div className="msg user"><div className="bubble">{q.content}</div></div>
+                  {a && (
+                    <div className="msg bot">
+                      <span className="avatar"><Icon name="agent" size={16} /></span>
+                      <div className="bot-body">
+                        {a.status === "error" ? <p className="inline-msg err"><Icon name="alert" size={14} /> {a.content}</p>
+                          : <AnswerCard result={asResult(a)} />}
+                        {a.status !== "error" && <button className="btn ghost sm copy-btn" onClick={() => copy(a.content, a.id)}>{copied === a.id ? "Copied" : "Copy answer"}</button>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {live && (
+                <div className="turn">
+                  <div className="msg user"><div className="bubble">{live.question}</div></div>
+                  <div className="msg bot">
+                    <span className="avatar"><Icon name="agent" size={16} /></span>
+                    <div className="bot-body">
+                      <div className="bot-head"><strong>{agent ? agent.name : "Project knowledge"}</strong><Stepper stages={live.stages} /></div>
+                      {live.notices.map((n) => <p key={n} className="note warn"><Icon name="alert" size={13} /> {n}</p>)}
+                      {live.error && <p className="inline-msg err" role="alert"><Icon name="alert" size={14} /> {live.error}</p>}
+                      {(!live.error || live.result) && <AnswerCard streamed={live.streamed} result={live.result} busy={live.busy} toolCalls={live.tools} />}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+          {error && <p className="inline-msg err" role="alert"><Icon name="alert" size={14} /> {error}</p>}
           <div ref={endRef} />
         </div>
 
-        <form className="composer" onSubmit={(e) => { e.preventDefault(); ask(); }}>
+        <form className="composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
           <textarea value={question} onChange={(e) => setQuestion(e.target.value)} rows={1} aria-label="Question"
-            placeholder="Ask in English, తెలుగు or हिन्दी…"
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }} />
-          <button className="btn primary icon-btn" disabled={busy || !question.trim()} aria-label="Send">
-            {busy ? <span className="spinner" /> : <Icon name="send" size={16} />}
+            placeholder={active ? "Ask a follow-up…" : "Ask in English, తెలుగు or हिन्दी…"}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
+          <button className="btn primary icon-btn" disabled={live?.busy || !question.trim()} aria-label="Send">
+            {live?.busy ? <span className="spinner" /> : <Icon name="send" size={16} />}
           </button>
         </form>
-        <p className="composer-hint muted small">Enter to send · Shift+Enter for a new line · costs are estimates, not a bill</p>
+        <p className="composer-hint muted small">Enter to send · Shift+Enter for a new line · your conversations are private to you</p>
       </div>
-
-      <aside className={`chat-side${panelOpen ? " open" : ""}`} aria-label="Sources and tools">
-        {agentId ? (
-          <>
-            <div className="section-label">This agent's sources</div>
-            {agentGraph === null && <div className="skeleton-line" />}
-            {agentGraph && agentSources.length === 0 && <p className="muted small">No sources on this agent.</p>}
-            {agentSources.map((n) => (
-              <div key={n.id} className={`toggle-card readonly${linked(n.id) ? " on" : ""}`}>
-                <span className="chip-icon"><Icon name={n.type === "source_repo" ? "repo" : "url" in n.config ? "url" : "pdf"} size={15} /></span>
-                <span className="toggle-text">
-                  <strong>{n.id}</strong>
-                  <span className="muted small">{sourceInfo[n.id] ? `${sourceInfo[n.id].chunks} chunks · ${sourceInfo[n.id].file}` : "empty"}{linked(n.id) ? "" : " · not connected"}</span>
-                </span>
-              </div>
-            ))}
-            <div className="section-label">Tools</div>
-            {agentGraph && agentTools.length === 0 && <p className="muted small">No tools on this agent.</p>}
-            {agentTools.map((n) => (
-              <div key={n.id} className={`toggle-card readonly${linked(n.id) ? " on" : ""}`}>
-                <span className="chip-icon"><Icon name={n.type === "tool_mcp" ? "mcp" : "calculator"} size={15} /></span>
-                <span className="toggle-text"><strong>{n.type === "tool_mcp" ? `MCP tool · ${n.config.server}` : "Calculator"}</strong><span className="muted small">{n.id}{linked(n.id) ? "" : " · not connected"}</span></span>
-              </div>
-            ))}
-            <button className="btn ghost sm" onClick={() => go("builder")}><Icon name="builder" size={14} /> Edit in Builder</button>
-          </>
-        ) : (
-          <>
-            <div className="section-label">Sources</div>
-            {SOURCES.map((s) => (
-              <Toggle key={s.id} icon={s.kind} label={s.label} on={!!sourceInfo[s.id] && useSource[s.id]} disabled={!sourceInfo[s.id]}
-                detail={sourceInfo[s.id] ? `${sourceInfo[s.id].chunks} chunks · ${sourceInfo[s.id].file}` : "empty: add it in Knowledge"}
-                onChange={(on) => setUseSource((u) => ({ ...u, [s.id]: on }))} />
-            ))}
-            <div className="section-label">Tools</div>
-            {TOOLS.map((t) => (
-              <Toggle key={t.id} icon={t.kind} label={t.label} on={useTool[t.id]}
-                detail={t.kind === "calculator" ? "exact arithmetic for amounts" : "read-only order lookups"}
-                onChange={(on) => setUseTool((u) => ({ ...u, [t.id]: on }))} />
-            ))}
-            <button className="btn ghost sm" onClick={() => go("knowledge")}><Icon name="knowledge" size={14} /> Manage knowledge</button>
-          </>
-        )}
-      </aside>
+      {dialog}
     </section>
   );
 }

@@ -99,7 +99,8 @@ function New-Graph([object[]]$Sources) {
 
 # Runs a question; QuestionJson is a JSON string literal. Returns the final event and agent detail.
 function Invoke-Run([string]$QuestionJson, $Graph, [int]$GraphId = 0) {
-    $target = if ($GraphId) { "`"graph_id`":$GraphId" } else { "`"graph`":$($Graph | ConvertTo-Json -Depth 10 -Compress)" }
+    # Phase 8: an unsaved graph runs inside the test account's project.
+    $target = if ($GraphId) { "`"graph_id`":$GraphId" } else { "`"project_id`":$($script:Who.Project),`"graph`":$($Graph | ConvertTo-Json -Depth 10 -Compress)" }
     $r = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" "{`"question`":$QuestionJson,`"model`":`"$Model`",$target}"
     if ($r.Status -ne 200) { throw "HTTP $($r.Status): $($r.Text)" }
     $events = @($r.Json.events)
@@ -147,6 +148,14 @@ $QHindiRefund = Get-JsonString @(0x0930, 0x093F, 0x092B, 0x0902, 0x0921, 32, 0x0
 $script:ApiUp = $false
 try { $script:ApiUp = ((Invoke-Api 'GET' "$Api/health").Json.ok -eq $true) } catch { }
 if (-not $script:ApiUp) { Write-Host 'The api is not reachable on :8000. Run: docker compose up -d --build' -ForegroundColor Red }
+else {
+    # Phase 8: a fresh test account (real registration, own session and CSRF token); its personal workspace
+    # holds this script's projects and sources.
+    . "$PSScriptRoot\_session.ps1"
+    $script:Who = New-TestSession 'p5'
+    $script:Http = $script:Who.Http
+}
+$script:RepoId = 0; $script:UrlId = 0
 $ready = $false
 try { $ready = (@((Invoke-Api 'GET' "$Api/models").Json.models | Where-Object { $_.key -eq $Model })[0]).ready } catch { }
 Write-Host "Answer model: $Model (ready: $ready)"
@@ -157,85 +166,97 @@ try {
     Write-Host "`n== GitHub repo connector ($Repo)"
     $script:RepoInfo = $null
     Test-Check 'repo is downloaded and its text files are chunked per file' {
-        $r = Invoke-Api 'POST' "$Api/sources/p5_repo/repo" "{`"url`":`"$Repo`"}"
+        $r = Invoke-Api 'POST' "$Api/projects/$($script:Who.Project)/sources/repo" "{`"url`":`"$Repo`"}"
         if ($r.Status -ne 201) { return "HTTP $($r.Status): $($r.Text)" }
         $script:RepoInfo = $r.Json
-        if ($r.Json.kind -eq 'repo' -and $r.Json.files -ge 2 -and $r.Json.chunks -ge 2 -and $r.Json.repo -match '^octocat/Spoon-Knife@[0-9a-f]+$') { $true } else { $r.Text }
+        $script:RepoId = $r.Json.id
+        if ($r.Json.kind -eq 'repo' -and $r.Json.status -eq 'ready' -and $r.Json.chunk_count -ge 2 -and $r.Json.title -match '^octocat/Spoon-Knife@[0-9a-f]+$' -and $r.Json.revision) { $true } else { $r.Text }
     }
     Test-Check 'repo chunks link to the exact file and commit on GitHub (db)' {
         $envValues = @{}
         foreach ($line in Get-Content '.env') { if ($line -match '^\s*([A-Z0-9_]+)=(.*)$') { $envValues[$Matches[1]] = $Matches[2].Trim() } }
         $u = if ($envValues['POSTGRES_USER']) { $envValues['POSTGRES_USER'] } else { 'bharat' }
         $d = if ($envValues['POSTGRES_DB']) { $envValues['POSTGRES_DB'] } else { 'bharatagent' }
-        $sql = "SELECT count(*) || ',' || count(*) FILTER (WHERE origin LIKE 'https://github.com/octocat/Spoon-Knife/blob/%' AND content LIKE 'File: %') FROM chunks WHERE scope = 'inline' AND source_id = 'p5_repo';"
+        $sql = "SELECT count(*) || ',' || count(*) FILTER (WHERE origin LIKE 'https://github.com/octocat/Spoon-Knife/blob/%' AND content LIKE 'File: %') FROM chunks WHERE source_ref = $($script:RepoId) AND (SELECT count(DISTINCT file_name) FROM chunks WHERE source_ref = $($script:RepoId)) >= 2;"
         $out = ($sql | docker compose exec -T db psql -U $u -d $d -tA 2>$null | Out-String).Trim()
         $parts = $out -split ','
         if ($parts.Count -eq 2 -and [int]$parts[0] -gt 0 -and $parts[0] -eq $parts[1]) { $true } else { "chunks,linked = '$out'" }
     }
-    Test-Check 'a link that is not a GitHub repo is refused with a clear message (422)' {
-        $r = Invoke-Api 'POST' "$Api/sources/p5_repo_bad/repo" '{"url":"https://example.com/not-a-repo"}'
-        if ($r.Status -eq 422 -and $r.Json.detail -match 'GitHub repository link') { $true } else { "HTTP $($r.Status): $($r.Text)" }
+    Test-Check 'a link that is not a GitHub repo is refused with a clear message (400)' {
+        $r = Invoke-Api 'POST' "$Api/projects/$($script:Who.Project)/sources/repo" '{"url":"https://example.com/not-a-repo"}'
+        if ($r.Status -eq 400 -and $r.Json.detail -match 'GitHub repository') { $true } else { "HTTP $($r.Status): $($r.Text)" }
     }
 
     Write-Host "`n== Docs URL connector ($Page)"
     Test-Check 'web page is fetched, its text extracted and chunked, with title and link' {
-        $r = Invoke-Api 'POST' "$Api/sources/p5_url/url" "{`"url`":`"$Page`"}"
+        $r = Invoke-Api 'POST' "$Api/projects/$($script:Who.Project)/sources/url" "{`"url`":`"$Page`"}"
         if ($r.Status -ne 201) { return "HTTP $($r.Status): $($r.Text)" }
-        if ($r.Json.kind -eq 'url' -and $r.Json.chunks -ge 1 -and $r.Json.file -eq 'Example Domain' -and $r.Json.url -like 'https://example.com*') { $true } else { $r.Text }
+        $script:UrlId = $r.Json.id
+        if ($r.Json.kind -eq 'url' -and $r.Json.chunk_count -ge 1 -and $r.Json.title -eq 'Example Domain' -and $r.Json.url -like 'https://example.com*') { $true } else { $r.Text }
     }
     foreach ($bad in @('http://ollama:11434/api/tags', 'http://db:5432/', 'http://127.0.0.1:8000/health',
                        'http://169.254.169.254/latest/meta-data', 'http://host.docker.internal:3000/', 'file:///etc/passwd')) {
         Test-Check "internal or non-web link is refused: $bad" {
-            $r = Invoke-Api 'POST' "$Api/sources/p5_bad/url" "{`"url`":`"$bad`"}"
-            if ($r.Status -eq 400 -and $r.Json.detail -match 'private or internal|Only http') { $true } else { "HTTP $($r.Status): $($r.Text)" }
+            $r = Invoke-Api 'POST' "$Api/projects/$($script:Who.Project)/sources/url" "{`"url`":`"$bad`"}"
+            if ($r.Status -eq 400 -and $r.Json.detail -match 'private or internal|Only http|Enter a web address') { $true } else { "HTTP $($r.Status): $($r.Text)" }
         }
     }
 
-    Write-Host "`n== Saved graphs keep their chunks apart (same source id 'shared_s1')"
-    $script:GraphA = 0; $script:GraphB = 0
-    Test-Check 'two saved graphs with the same source id hold different PDFs' {
+    # Phase 8: the boundary for knowledge is the project (it was the saved graph before). Two projects of this
+    # account each hold one PDF; their agents use the same node id 'shared_s1'.
+    Write-Host "`n== Projects keep their chunks apart (same node id 'shared_s1')"
+    $script:GraphA = 0; $script:GraphB = 0; $script:SrcA = 0; $script:SrcB = 0; $script:ProjA = 0; $script:ProjB = 0
+    Test-Check 'two projects hold different PDFs; their agents use the same node id' {
         foreach ($name in @('A', 'B')) {
-            $g = New-Graph @(@{ id = 'shared_s1'; type = 'source_doc'; config = @{ file = "$name.pdf" } })
-            $r = Invoke-Api 'POST' "$Api/graphs" "{`"name`":`"p5 graph $name`",`"graph`":$($g | ConvertTo-Json -Depth 10 -Compress)}"
-            if ($r.Status -ne 201) { return "save $name : HTTP $($r.Status)" }
+            $projId = (Invoke-Api 'POST' "$Api/projects" "{`"org_id`":$($script:Who.Personal),`"name`":`"p5 project $name`"}").Json.id
+            Set-Variable -Scope Script -Name "Proj$name" -Value $projId
+        }
+        $a = Send-File "$Api/projects/$($script:ProjA)/sources/file" 'samples\refund-policy.pdf' 'refund-policy.pdf'
+        $b = Send-File "$Api/projects/$($script:ProjB)/sources/file" 'samples\hostel-rules.pdf' 'hostel-rules.pdf'
+        $script:SrcA = $a.Json.id; $script:SrcB = $b.Json.id
+        foreach ($name in @('A', 'B')) {
+            $sid = if ($name -eq 'A') { $script:SrcA } else { $script:SrcB }
+            $projId = if ($name -eq 'A') { $script:ProjA } else { $script:ProjB }
+            $g = New-Graph @(@{ id = 'shared_s1'; type = 'source_doc'; config = @{ source_ref = $sid } })
+            $r = Invoke-Api 'POST' "$Api/graphs" "{`"project_id`":$projId,`"name`":`"p5 graph $name`",`"graph`":$($g | ConvertTo-Json -Depth 10 -Compress)}"
+            if ($r.Status -ne 201) { return "save $name : HTTP $($r.Status) $($r.Text)" }
             Set-Variable -Scope Script -Name "Graph$name" -Value $r.Json.id
         }
-        $a = Send-File "$Api/sources/shared_s1/pdf?graph_id=$($script:GraphA)" 'samples\refund-policy.pdf' 'refund-policy.pdf'
-        $b = Send-File "$Api/sources/shared_s1/pdf?graph_id=$($script:GraphB)" 'samples\hostel-rules.pdf' 'hostel-rules.pdf'
-        if ($a.Status -eq 201 -and $b.Status -eq 201 -and $a.Json.scope -eq "graph:$($script:GraphA)" -and $b.Json.scope -eq "graph:$($script:GraphB)") { $true }
-        else { "A: HTTP $($a.Status) $($a.Json.scope); B: HTTP $($b.Status) $($b.Json.scope)" }
+        if ($a.Status -eq 201 -and $b.Status -eq 201 -and $script:GraphA -and $script:GraphB) { $true } else { "A: HTTP $($a.Status); B: HTTP $($b.Status)" }
     }
-    Test-Check 'each graph searches only its own chunks; the inline scope sees neither' {
+    Test-Check 'each agent searches only its own project; an agent cannot use the other project''s source' {
         $ra = (Invoke-Run '"What time does the hostel gate close?"' $null $script:GraphA).Agent.retrieval
         $rb = (Invoke-Run '"What time does the hostel gate close?"' $null $script:GraphB).Agent.retrieval
         $fa = @($ra.candidates | ForEach-Object { $_.file } | Sort-Object -Unique) -join ','
         $fb = @($rb.candidates | ForEach-Object { $_.file } | Sort-Object -Unique) -join ','
-        $inline = (Invoke-Api 'GET' "$Api/sources/shared_s1").Json.chunks
-        if ($fa -eq 'refund-policy.pdf' -and $fb -eq 'hostel-rules.pdf' -and $ra.scope -eq "graph:$($script:GraphA)" -and $inline -eq 0) { $true }
-        else { "A searched '$fa' ($($ra.scope)), B searched '$fb', inline chunks $inline" }
+        $g = New-Graph @(@{ id = 'shared_s1'; type = 'source_doc'; config = @{ source_ref = $script:SrcB } })
+        $cross = (Invoke-Api 'POST' "$Api/graphs" "{`"project_id`":$($script:ProjA),`"name`":`"cross`",`"graph`":$($g | ConvertTo-Json -Depth 10 -Compress)}").Status
+        if ($fa -eq 'refund-policy.pdf' -and $fb -eq 'hostel-rules.pdf' -and $ra.scope -eq "project:$($script:ProjA)" -and $cross -eq 422) { $true }
+        else { "A searched '$fa' ($($ra.scope)), B searched '$fb', cross-project agent HTTP $cross" }
     }
-    Test-Check 'graph A answers "I don''t know" about the hostel; graph B answers it' {
+    Test-Check 'agent A answers "I don''t know" about the hostel; agent B answers it' {
         $a = Invoke-Run '"What time does the hostel gate close?"' $null $script:GraphA
         $b = Invoke-Run '"What time does the hostel gate close?"' $null $script:GraphB
         if ($a.Last.supported -eq $false -and $b.Last.supported -eq $true -and $b.Last.answer -match '9:30') { $true }
         else { "A supported=$($a.Last.supported); B supported=$($b.Last.supported): $($b.Last.answer)" }
     }
-    Test-Check 'upload to a node the saved graph does not have is refused (404)' {
-        $r = Send-File "$Api/sources/not_there/pdf?graph_id=$($script:GraphA)" 'samples\refund-policy.pdf' 'x.pdf'
+    Test-Check 'upload to a project that does not exist (or is not yours) is refused (404)' {
+        $r = Send-File "$Api/projects/99999999/sources/file" 'samples\refund-policy.pdf' 'x.pdf'
         if ($r.Status -eq 404) { $true } else { "HTTP $($r.Status)" }
     }
-    Test-Check 'a saved graph ingests its link sources from node settings (POST /graphs/{id}/ingest)' {
-        $g = New-Graph @(@{ id = 'docs'; type = 'source_doc'; config = @{ url = $Page } })
-        $id = (Invoke-Api 'POST' "$Api/graphs" "{`"name`":`"p5 links`",`"graph`":$($g | ConvertTo-Json -Depth 10 -Compress)}").Json.id
-        $out = (Invoke-Api 'POST' "$Api/graphs/$id/ingest").Json
-        $docs = @($out.sources | Where-Object { $_.node -eq 'docs' })[0]
-        if ($docs.ok -and $docs.scope -eq "graph:$id" -and $docs.chunks -ge 1) { $true } else { $out | ConvertTo-Json -Compress -Depth 5 }
+    Test-Check 'a docs link added once is reused by a new agent without ingesting it again' {
+        $before = @((Invoke-Api 'GET' "$Api/projects/$($script:Who.Project)/sources").Json).Count
+        $g = New-Graph @(@{ id = 'docs'; type = 'source_doc'; config = @{ source_ref = $script:UrlId } })
+        $id = (Invoke-Api 'POST' "$Api/graphs" "{`"project_id`":$($script:Who.Project),`"name`":`"p5 links`",`"graph`":$($g | ConvertTo-Json -Depth 10 -Compress)}").Json.id
+        $after = @((Invoke-Api 'GET' "$Api/projects/$($script:Who.Project)/sources").Json).Count
+        $used = @((Invoke-Api 'GET' "$Api/sources/$($script:UrlId)").Json.agents | ForEach-Object { $_.id })
+        if ($id -and $before -eq $after -and $used -contains $id) { $true } else { "sources $before -> $after, used by $($used -join ',')" }
     }
 
     Write-Host "`n== Cited answers from the new sources, claims checked ($Model)"
     if (-not $ready) { Write-Host "        $Model is not set up; these checks will be SKIP" -ForegroundColor Yellow }
-    $repoGraph = New-Graph @(@{ id = 'p5_repo'; type = 'source_repo'; config = @{ url = $Repo } })
-    $pageGraph = New-Graph @(@{ id = 'p5_url'; type = 'source_doc'; config = @{ url = $Page } })
+    $repoGraph = New-Graph @(@{ id = 'p5_repo'; type = 'source_repo'; config = @{ source_ref = $script:RepoId } })
+    $pageGraph = New-Graph @(@{ id = 'p5_url'; type = 'source_doc'; config = @{ source_ref = $script:UrlId } })
     Test-Check 'repo question: cites README.md with a GitHub link; every kept sentence backed by it' {
         if (-not $ready) { return "SKIP:$Model is not set up" }
         $run = Invoke-Run '"What is the Spoon-Knife repository meant for?"' $repoGraph

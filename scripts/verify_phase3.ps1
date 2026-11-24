@@ -109,12 +109,17 @@ function Invoke-Api([string]$Method, [string]$Url, [string]$Body = $null) {
     New-Result ($script:Http.SendAsync($req).GetAwaiter().GetResult())
 }
 
+# Phase 8: files go into the signed-in account's project; $script:Src remembers which registry source each of
+# this script's source names (p3_refund, p3_hostel...) became, and graphs point at it with source_ref.
+$script:Src = @{}
 function Send-File([string]$SourceId, [string]$Path, [string]$FileName) {
     $form = [System.Net.Http.MultipartFormDataContent]::new()
     $file = [System.Net.Http.ByteArrayContent]::new([System.IO.File]::ReadAllBytes((Resolve-Path $Path)))
     $file.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse('application/pdf')
     $form.Add($file, 'file', $FileName)
-    New-Result ($script:Http.PostAsync("$Api/sources/$SourceId/pdf", $form).GetAwaiter().GetResult())
+    $r = New-Result ($script:Http.PostAsync("$Api/projects/$($script:Who.Project)/sources/file", $form).GetAwaiter().GetResult())
+    if ($r.Status -eq 201) { $script:Src[$SourceId] = $r.Json.id }
+    $r
 }
 
 # Reads an SSE response line by line as it arrives and stamps each event with arrived_ms (ms since send).
@@ -154,7 +159,7 @@ function New-Graph([string[]]$SourceIds, [string]$Language = 'en') {
     )
     $edges = @(@{ from = 'n1'; to = 'n2' }, @{ from = 'n2'; to = 'n3' }, @{ from = 'n3'; to = 'n4' }, @{ from = 'n4'; to = 'n5' })
     foreach ($id in $SourceIds) {
-        $nodes += @{ id = $id; type = 'source_doc'; config = @{ file = "$id.pdf" } }
+        $nodes += @{ id = $id; type = 'source_doc'; config = @{ source_ref = $script:Src[$id] } }
         $edges += @{ from = $id; to = 'n4' }
     }
     @{ nodes = $nodes; edges = $edges }
@@ -163,7 +168,7 @@ function New-Graph([string[]]$SourceIds, [string]$Language = 'en') {
 function New-RunBody($Graph, [string]$QuestionJson, [string]$Language) {
     $g = $Graph | ConvertTo-Json -Depth 10 -Compress
     $lang = if ($Language) { ",`"language`":`"$Language`"" } else { '' }
-    "{`"question`":$QuestionJson$lang,`"graph`":$g}"
+    "{`"question`":$QuestionJson$lang,`"project_id`":$($script:Who.Project),`"graph`":$g}"
 }
 
 function Invoke-Run($Graph, [string]$QuestionJson, [string]$Language) {
@@ -268,6 +273,12 @@ try {
     }
 
     try { $script:ApiUp = ((Invoke-Api 'GET' "$Api/health").Json.ok -eq $true) } catch { }
+    if ($script:ApiUp) {
+        # Phase 8: sign in as a fresh test account (real registration, own session and CSRF token).
+        . "$PSScriptRoot\_session.ps1"
+        $script:Who = New-TestSession 'p3'
+        $script:Http = $script:Who.Http
+    }
     $status = $null
     try { $status = (Invoke-Api 'GET' "$Api/status").Json } catch { }
     $script:Mode = if ($UseFakeGemini) { 'fake' } elseif ($status.keys.gemini -eq $true) { 'real' } else { 'none' }
@@ -277,26 +288,26 @@ try {
     # ---------- Ingestion ----------
     Write-Host "`n== Ingestion (PDF -> text -> chunks -> bge-m3 -> pgvector)"
     $script:RefundChunks = 0
-    Test-Check 'upload refund-policy.pdf: 2 pages, chunks stored' {
+    Test-Check 'upload refund-policy.pdf: ready, chunks stored (its 2 pages are checked in the db below)' {
         $r = Send-File 'p3_refund' 'samples\refund-policy.pdf' 'refund-policy.pdf'
         if ($r.Status -ne 201) { return "HTTP $($r.Status): $($r.Text)" }
-        $script:RefundChunks = $r.Json.chunks
-        if ($r.Json.pages -eq 2 -and $r.Json.chunks -ge 2) { $true } else { $r.Text }
+        $script:RefundChunks = $r.Json.chunk_count
+        if ($r.Json.status -eq 'ready' -and $r.Json.chunk_count -ge 2) { $true } else { $r.Text }
     }
     Test-Check 'upload hostel-rules.pdf as a second source' {
         $r = Send-File 'p3_hostel' 'samples\hostel-rules.pdf' 'hostel-rules.pdf'
-        if ($r.Status -eq 201 -and $r.Json.chunks -ge 1) { $true } else { "HTTP $($r.Status): $($r.Text)" }
+        if ($r.Status -eq 201 -and $r.Json.chunk_count -ge 1) { $true } else { "HTTP $($r.Status): $($r.Text)" }
     }
-    Test-Check 'GET /sources/p3_refund reports the stored chunks' {
-        $r = Invoke-Api 'GET' "$Api/sources/p3_refund"
-        if ($r.Json.chunks -eq $script:RefundChunks -and $r.Json.file -eq 'refund-policy.pdf') { $true } else { $r.Text }
+    Test-Check 'GET /sources/{id} reports the stored chunks' {
+        $r = Invoke-Api 'GET' "$Api/sources/$($script:Src['p3_refund'])"
+        if ($r.Json.chunk_count -eq $script:RefundChunks -and $r.Json.title -eq 'refund-policy.pdf') { $true } else { $r.Text }
     }
     Test-Check 'chunks are tagged with the source id and keep page numbers (db)' {
         $envValues = @{}
         foreach ($line in Get-Content '.env') { if ($line -match '^\s*([A-Z0-9_]+)=(.*)$') { $envValues[$Matches[1]] = $Matches[2].Trim() } }
         $u = if ($envValues['POSTGRES_USER']) { $envValues['POSTGRES_USER'] } else { 'bharat' }
         $d = if ($envValues['POSTGRES_DB']) { $envValues['POSTGRES_DB'] } else { 'bharatagent' }
-        $sql = "SELECT count(DISTINCT page) || ',' || count(*) || ',' || count(*) FILTER (WHERE vector_dims(embedding) = 1024) FROM chunks WHERE source_id = 'p3_refund';"
+        $sql = "SELECT count(DISTINCT page) || ',' || count(*) || ',' || count(*) FILTER (WHERE vector_dims(embedding) = 1024) FROM chunks WHERE source_ref = $($script:Src['p3_refund']);"
         $out = ($sql | docker compose exec -T db psql -U $u -d $d -tA 2>$null | Out-String).Trim()
         if ($out -eq "2,$($script:RefundChunks),$($script:RefundChunks)") { $true } else { "pages,chunks,1024-dim = '$out'" }
     }
@@ -313,7 +324,7 @@ try {
     }
     Test-Check 'a path in the file name cannot escape the upload folder' {
         $r = Send-File 'p3_esc' 'samples\hostel-rules.pdf' '..\..\evil.pdf'
-        if ($r.Status -eq 201 -and $r.Json.file -eq 'evil.pdf') { $true } else { "HTTP $($r.Status), file=$($r.Json.file)" }
+        if ($r.Status -eq 201 -and $r.Json.title -eq 'evil.pdf') { $true } else { "HTTP $($r.Status), file=$($r.Json.title)" }
     }
 
     # ---------- Graph connections decide what the agent can see ----------
@@ -417,14 +428,15 @@ try {
         $html = (Invoke-Api 'GET' 'http://127.0.0.1:3000/').Text
         if ($html -notmatch 'src="(/assets/[^"]+\.js)"') { return 'no script tag' }
         $js = (Invoke-Api 'GET' "http://127.0.0.1:3000$($Matches[1])").Text
-        $missing = @('chat_pdf', 'Connected to agent', 'pipeline/run', 'citations') | Where-Object { $js -notmatch [regex]::Escape($_) }
+        # Phase 8 redesigned the chat (persistent conversations); these are its strings now.
+        $missing = @('conversation_id', 'Project knowledge', 'pipeline/run', 'citations') | Where-Object { $js -notmatch [regex]::Escape($_) }
         if ($missing.Count -eq 0) { $true } else { "missing: $($missing -join ', ')" }
     }
 }
 finally {
     # p3_esc and p3_scan only test upload handling; the two sample sources are kept unless -Cleanup.
     $remove = @('p3_esc', 'p3_scan') + $(if ($Cleanup) { @('p3_refund', 'p3_hostel') } else { @() })
-    foreach ($id in $remove) { try { Invoke-Api 'DELETE' "$Api/sources/$id" | Out-Null } catch { } }
+    foreach ($id in $remove) { if ($script:Src[$id]) { try { Invoke-Api 'DELETE' "$Api/sources/$($script:Src[$id])" | Out-Null } catch { } } }
     if ($UseFakeGemini) {
         Write-Host "`nRestoring the normal api (without the fake Gemini)..."
         if ($fakeProcess) { Stop-Process -Id $fakeProcess.Id -Force -ErrorAction SilentlyContinue }
@@ -442,5 +454,5 @@ if ($script:Blocked -gt 0) {
     $hint = if ($script:DailyQuota) { 'The daily quota resets at midnight Pacific time.' } else { 'Wait a minute and run the script again.' }
     Write-Host "Blocked checks say nothing about the feature: Gemini refused the request (HTTP 429). $hint" -ForegroundColor Magenta
 }
-if ($script:Fail -eq 0 -and $script:Skip -eq 0 -and $script:Blocked -eq 0) { Write-Host 'Phase 3 RAG verified.' -ForegroundColor Green; exit 0 }
+if ($total -gt 0 -and $script:Fail -eq 0 -and $script:Skip -eq 0 -and $script:Blocked -eq 0) { Write-Host 'Phase 3 RAG verified.' -ForegroundColor Green; exit 0 }
 Write-Host 'Phase 3 RAG NOT fully verified.' -ForegroundColor Red; exit 1

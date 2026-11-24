@@ -56,11 +56,9 @@ def offline_models(monkeypatch, request):
     and usage is not logged. Tests can override any of these."""
     from app.models import gemini, generate, groq, ollama
     from app.pipeline.stages import agent
-    from app.routes import pipeline
+
 
     monkeypatch.setattr(generate, "sleep", lambda seconds: None)
-    if "real_usage" not in request.keywords:
-        monkeypatch.setattr(pipeline, "resolve_user", lambda name: None)
     if "real_models" in request.keywords:
         return
     monkeypatch.setattr(agent, "retrieve", lambda question, source_ids, scope="inline": ([], []))

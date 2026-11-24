@@ -80,7 +80,8 @@ function Invoke-Api([string]$Method, [string]$Url, [string]$Body = $null) {
 
 # Sends several requests at the same moment and returns their responses in order.
 function Invoke-Parallel([object[]]$Requests) {
-    $tasks = @($Requests | ForEach-Object { $script:Http.SendAsync((New-Request $_.Method $_.Url $_.Body)) })
+    # Phase 8: each request may name the signed-in client (person) that sends it.
+    $tasks = @($Requests | ForEach-Object { $cl = if ($_.Client) { $_.Client } else { $script:Http }; $cl.SendAsync((New-Request $_.Method $_.Url $_.Body)) })
     [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]$tasks)
     , @($tasks | ForEach-Object { Read-Response $_.Result })
 }
@@ -169,8 +170,9 @@ function New-Graph([string]$Model, [object[]]$Extra, [bool]$LocalOnly = $false) 
     @{ nodes = $nodes + $Extra; edges = $edges }
 }
 
-function Save-Graph([string]$Name, $Graph) {
-    $r = Invoke-Api 'POST' "$Api/graphs" (ConvertTo-Json10 @{ name = $Name; graph = $Graph })
+function Save-Graph([string]$Name, $Graph, [int]$ProjectId = 0) {
+    if (-not $ProjectId) { $ProjectId = $script:ProjA }
+    $r = Invoke-Api 'POST' "$Api/graphs" (ConvertTo-Json10 @{ project_id = $ProjectId; name = $Name; graph = $Graph })
     if ($r.Status -ne 201) { throw "save: HTTP $($r.Status) $($r.Text)" }
     $r.Json.id
 }
@@ -183,10 +185,16 @@ function Get-Run([hashtable]$Body) {
         Agent = ($events | Where-Object { $_.stage -eq 'agent' -and $_.status -eq 'done' }).detail }
 }
 
-function Get-Listing([int]$GraphId) {
-    $l = (Invoke-Api 'GET' "$Api/sources?graph_id=$GraphId").Json
+# Phase 8: the project's source listing, keyed by this script's node names (s_pdf, s_repo...) through $Refs
+# (node name -> registry source id). file = the source title, chunks = its chunk count.
+function Get-Listing([hashtable]$Refs, [int]$ProjectId, $Client = $null) {
+    if (-not $Client) { $Client = $script:Http }
+    $rows = @((Read-Response ($Client.SendAsync((New-Request 'GET' "$Api/projects/$ProjectId/sources")).GetAwaiter().GetResult())).Json)
     $map = @{}
-    foreach ($s in @($l.sources)) { $map[$s.source_id] = $s }
+    foreach ($name in @($Refs.Keys)) {
+        $row = @($rows | Where-Object { $_.id -eq $Refs[$name] })[0]
+        if ($row) { $map[$name] = [pscustomobject]@{ id = $row.id; file = $row.title; chunks = $row.chunk_count; status = $row.status } }
+    }
     $map
 }
 
@@ -195,7 +203,10 @@ $Hostel = [System.IO.File]::ReadAllBytes((Resolve-Path 'samples\hostel-rules.pdf
 $Injection = [System.IO.File]::ReadAllBytes((Resolve-Path 'samples\prompt-injection.pdf'))
 $Scanned = [System.IO.File]::ReadAllBytes((Resolve-Path 'samples\blank-scan.pdf'))
 $Stamp = Get-Date -Format 'MMddHHmmss'
-$UserA = "p71a_$Stamp"; $UserB = "p71b_$Stamp"
+# Phase 8: two real test accounts (A and B, each with its own session, CSRF token and personal workspace) replace
+# the p71a_/p71b_ user names; $script:Http is the client of whoever is acting.
+$script:A = $null; $script:B = $null; $script:ProjA = 0; $script:ProjB = 0
+$script:SrcA = @{}; $script:SrcB = @{}
 
 $Knowledge = @(
     @{ id = 's_pdf'; q = 'How much is refunded if a lab test is cancelled before the sample is collected?'; fact = '80'; file = 'refund-policy.pdf' },
@@ -208,6 +219,13 @@ for ($i = 0; $i -lt 60 -and -not $script:ApiUp; $i++) {  # a just-restarted api 
     try { $script:ApiUp = ((Invoke-Api 'GET' "$Api/health").Json.ok -eq $true) } catch { Start-Sleep -Seconds 2 }
 }
 if (-not $script:ApiUp) { Write-Host 'The api is not reachable: this run is NOT valid. Start Docker Desktop and the stack first.' -ForegroundColor Red }
+else {
+    . "$PSScriptRoot\_session.ps1"
+    $script:A = New-TestSession 'p71a'
+    $script:B = New-TestSession 'p71b'
+    $script:ProjA = $script:A.Project; $script:ProjB = $script:B.Project
+    $script:Http = $script:A.Http
+}
 
 # ============================ Baseline ============================
 Write-Host "`n== Baseline"
@@ -247,66 +265,72 @@ Test-Check 'a database backup restores completely into a scratch database' {
 # ============================ Persistence ============================
 Write-Host "`n== Saved knowledge survives restarts"
 $script:Gid = 0; $script:Before = $null; $script:GraphJson = ''
+# Phase 8: the source nodes point at project sources (source_ref, filled in once they are added). The old
+# 's_int' node (an empty repo node, filled by the interrupted ingestion below) is gone: an agent can only use
+# ready sources, so the interrupted ingestion now creates its own source and is checked in the registry.
 $Sources = @(
-    @{ id = 's_pdf'; type = 'source_doc'; config = @{ file = 'refund-policy.pdf' } },
-    @{ id = 's_repo'; type = 'source_repo'; config = @{ url = 'https://github.com/octocat/Spoon-Knife' } },
-    @{ id = 's_url'; type = 'source_doc'; config = @{ url = 'https://example.com' } },
-    @{ id = 's_int'; type = 'source_repo'; config = @{ url = 'https://github.com/octocat/Spoon-Knife' } },
+    @{ id = 's_pdf'; type = 'source_doc'; config = @{ source_ref = 0 } },
+    @{ id = 's_repo'; type = 'source_repo'; config = @{ source_ref = 0 } },
+    @{ id = 's_url'; type = 'source_doc'; config = @{ source_ref = 0 } },
     @{ id = 't_calc'; type = 'tool_calculator'; config = @{} },
     @{ id = 't_mcp'; type = 'tool_mcp'; config = @{ server = 'orders-db'; mode = 'read_only' } }
 )
 
 function Get-Snapshot([int]$GraphId) {
-    $sql = "select source_id||':'||count(*)||':'||count(embedding)||':'||min(id)||':'||max(id) from chunks where scope='graph:$GraphId' group by source_id order by source_id"
+    $sql = "select source_ref||':'||count(*)||':'||count(embedding)||':'||min(id)||':'||max(id) from chunks where scope='project:$($script:ProjA)' group by source_ref order by source_ref"
     [pscustomobject]@{ Graph = (Invoke-Api 'GET' "$Api/graphs/$GraphId").Text; Chunks = (Invoke-Sql $sql) -replace "`r?`n", ' ' }
 }
 
-function Test-Knowledge([int]$GraphId, [string]$User) {
+function Test-Knowledge([int]$GraphId) {
     $bad = @()
     foreach ($k in $Knowledge) {
-        $run = Get-Run @{ question = $k.q; graph_id = $GraphId; model = 'local'; user = $User; local_only = $true }
+        $run = Get-Run @{ question = $k.q; graph_id = $GraphId; model = 'local'; local_only = $true }
         $cited = @($run.Last.citations | Where-Object { $_.source_id -eq $k.id })
         if (-not ($run.Last.supported -and $cited.Count -gt 0 -and $run.Last.answer -match $k.fact)) { $bad += "$($k.id): $($run.Last.answer)" }
     }
     if ($bad.Count -eq 0) { $true } else { $bad -join ' | ' }
 }
 
-Test-Check 'test users created' {
-    $a = Invoke-Api 'POST' "$Api/users" (ConvertTo-Json10 @{ name = $UserA })
-    $b = Invoke-Api 'POST' "$Api/users" (ConvertTo-Json10 @{ name = $UserB })
-    if ($a.Status -eq 201 -and $b.Status -eq 201) { $true } else { "HTTP $($a.Status) / $($b.Status)" }
+Test-Check 'requests are made as two signed-in test accounts with their own workspaces' {
+    $a = (Read-Response ($script:A.Http.SendAsync((New-Request 'GET' "$Api/auth/me")).GetAwaiter().GetResult())).Json.user.id
+    $b = (Read-Response ($script:B.Http.SendAsync((New-Request 'GET' "$Api/auth/me")).GetAwaiter().GetResult())).Json.user.id
+    if ($a -eq $script:A.UserId -and $b -eq $script:B.UserId -and $script:ProjA -ne $script:ProjB) { $true } else { "me: $a / $b" }
 }
-Test-Check 'agent saved; PDF, GitHub repo and docs page indexed into it' {
+Test-Check 'PDF, GitHub repo and docs page added to the project; agent saved with them' {
+    $p = Send-Upload "$Api/projects/$($script:ProjA)/sources/file" $Pdf 'refund-policy.pdf'
+    $r = Invoke-Api 'POST' "$Api/projects/$($script:ProjA)/sources/repo" '{"url":"https://github.com/octocat/Spoon-Knife"}'
+    $u = Invoke-Api 'POST' "$Api/projects/$($script:ProjA)/sources/url" '{"url":"https://example.com"}'
+    if ($p.Status -ne 201 -or $r.Status -ne 201 -or $u.Status -ne 201) { return "pdf $($p.Status), repo $($r.Status) $($r.Text), url $($u.Status) $($u.Text)" }
+    $script:SrcA = @{ s_pdf = $p.Json.id; s_repo = $r.Json.id; s_url = $u.Json.id }
+    foreach ($n in $Sources) { if ($script:SrcA.ContainsKey($n.id)) { $n.config.source_ref = $script:SrcA[$n.id] } }
     $script:Gid = Save-Graph "p71 persistence $Stamp" (New-Graph 'local' $Sources)
-    $p = Send-Upload "$Api/sources/s_pdf/pdf?graph_id=$($script:Gid)" $Pdf 'refund-policy.pdf'
-    $r = Invoke-Api 'POST' "$Api/sources/s_repo/repo?graph_id=$($script:Gid)" '{}'
-    $u = Invoke-Api 'POST' "$Api/sources/s_url/url?graph_id=$($script:Gid)" '{}'
-    if ($p.Status -eq 201 -and $r.Status -eq 201 -and $u.Status -eq 201) { $true } else { "pdf $($p.Status), repo $($r.Status) $($r.Text), url $($u.Status) $($u.Text)" }
+    $true
 }
 Test-Check 'every chunk has its embedding stored; the listing matches the database' {
     $script:Before = Get-Snapshot $script:Gid
-    $l = Get-Listing $script:Gid
+    $l = Get-Listing $script:SrcA $script:ProjA
+    $byId = @{}; foreach ($k in $l.Keys) { $byId["$($l[$k].id)"] = $l[$k] }
     $rows = $script:Before.Chunks -split ' ' | Where-Object { $_ }
-    $bad = @($rows | Where-Object { $p = $_ -split ':'; $p[1] -ne $p[2] -or [int]$l[$p[0]].chunks -ne [int]$p[1] })
+    $bad = @($rows | Where-Object { $p = $_ -split ':'; $p[1] -ne $p[2] -or [int]$byId[$p[0]].chunks -ne [int]$p[1] })
     if ($rows.Count -eq 3 -and $bad.Count -eq 0) { $true } else { "db: $($script:Before.Chunks)" }
 }
 Test-Check 'the original PDF file is kept in the uploads volume' {
-    $f = (Invoke-Native 'docker' @('compose', 'exec', '-T', 'api', 'ls', '-l', "/data/uploads/graph_$($script:Gid)/s_pdf/refund-policy.pdf")).Output
+    $f = (Invoke-Native 'docker' @('compose', 'exec', '-T', 'api', 'ls', '-l', "/data/uploads/project_$($script:ProjA)/source_$($script:SrcA.s_pdf)/refund-policy.pdf")).Output
     if ($f -match "$($Pdf.Length)") { $true } else { "ls: $f" }
 }
-Test-Check 'questions answered from the PDF, the repo and the docs page, each citing its source' { Test-Knowledge $script:Gid $UserA }
+Test-Check 'questions answered from the PDF, the repo and the docs page, each citing its source' { Test-Knowledge $script:Gid }
 
 Test-Check 'after an api restart: same agent, same chunks and embeddings, answers still cited' {
     docker compose restart api 2>$null | Out-Null
     if (-not (Wait-Healthy @('api'))) { return 'api did not come back' }
     $now = Get-Snapshot $script:Gid
     if ($now.Graph -ne $script:Before.Graph -or $now.Chunks -ne $script:Before.Chunks) { return "changed: $($now.Chunks)" }
-    Test-Knowledge $script:Gid $UserB
+    Test-Knowledge $script:Gid
 }
 Test-Check 'after a web restart: the app and the source status are served again' {
     docker compose restart web 2>$null | Out-Null
     Start-Sleep -Seconds 3
-    $l = (Invoke-Api 'GET' "$Web/api/sources?graph_id=$($script:Gid)").Json.sources
+    $l = (Invoke-Api 'GET' "$Web/api/projects/$($script:ProjA)/sources").Json
     $html = (Invoke-Api 'GET' "$Web/").Text
     if ($html -match 'id="root"' -and @($l).Count -eq 3) { $true } else { "sources via web: $(@($l).Count)" }
 }
@@ -317,38 +341,40 @@ Test-Check 'after the whole stack is taken down and up (volumes kept): nothing l
     if (-not (Wait-Healthy @('db', 'ollama', 'mcp-runner', 'api', 'web'))) { return 'stack did not come back' }
     $now = Get-Snapshot $script:Gid
     if ($now.Graph -ne $script:Before.Graph -or $now.Chunks -ne $script:Before.Chunks) { return "changed: $($now.Chunks)" }
-    $usage = (Invoke-Api 'GET' "$Api/usage/totals?user=$UserA").Json.requests
-    if ($usage -lt 3) { return "usage rows for $UserA after restart: $usage" }
-    Test-Knowledge $script:Gid $UserA
+    $usage = (Invoke-Api 'GET' "$Api/usage/totals").Json.requests
+    if ($usage -lt 3) { return "usage rows for account A after restart: $usage" }
+    Test-Knowledge $script:Gid
 }
 
 # ============================ Integrity ============================
 Write-Host "`n== Database integrity"
-$PdfUrl = "$Api/sources/s_pdf/pdf?graph_id=$($script:Gid)"
+# Phase 8: replacing the file of an existing source (POST /sources/{id}/file, 200) replaces its chunks.
+$PdfUrl = "$Api/sources/$($script:SrcA.s_pdf)/file"
 $script:PdfChunks = 0
 Test-Check 'uploading the same PDF again replaces it (no duplicate chunks)' {
-    $script:PdfChunks = (Get-Listing $script:Gid)['s_pdf'].chunks
+    $script:PdfChunks = (Get-Listing $script:SrcA $script:ProjA)['s_pdf'].chunks
     $r = Send-Upload $PdfUrl $Pdf 'refund-policy.pdf'
-    $n = (Get-Listing $script:Gid)['s_pdf'].chunks
-    if ($r.Status -eq 201 -and $n -eq $script:PdfChunks) { $true } else { "HTTP $($r.Status), chunks $($script:PdfChunks) -> $n" }
+    $n = (Get-Listing $script:SrcA $script:ProjA)['s_pdf'].chunks
+    $rows = [int](Invoke-Sql "select count(*) from chunks where source_ref = $($script:SrcA.s_pdf)")
+    if ($r.Status -eq 200 -and $n -eq $script:PdfChunks -and $rows -eq $n) { $true } else { "HTTP $($r.Status), chunks $($script:PdfChunks) -> $n" }
 }
 Test-Check 'four uploads of one source at the same moment leave exactly one copy' {
     $tasks = @(1..4 | ForEach-Object { $script:Http.SendAsync((New-Upload $PdfUrl $Pdf 'refund-policy.pdf')) })
     [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]$tasks)
     $codes = @($tasks | ForEach-Object { [int]$_.Result.StatusCode })
-    $n = [int](Invoke-Sql "select count(*) from chunks where scope='graph:$($script:Gid)' and source_id='s_pdf'")
-    $idx = Invoke-Sql "select count(distinct chunk_index) from chunks where scope='graph:$($script:Gid)' and source_id='s_pdf'"
-    if (($codes | Where-Object { $_ -ne 201 }).Count -eq 0 -and $n -eq $script:PdfChunks -and [int]$idx -eq $n) { $true } else { "codes $($codes -join ','), rows $n, distinct $idx" }
+    $n = [int](Invoke-Sql "select count(*) from chunks where source_ref = $($script:SrcA.s_pdf)")
+    $idx = Invoke-Sql "select count(distinct chunk_index) from chunks where source_ref = $($script:SrcA.s_pdf)"
+    if (($codes | Where-Object { $_ -ne 200 }).Count -eq 0 -and $n -eq $script:PdfChunks -and [int]$idx -eq $n) { $true } else { "codes $($codes -join ','), rows $n, distinct $idx" }
 }
 Test-Check 'a corrupt PDF is refused (422) and the previous content stays' {
     $bytes = [System.Text.Encoding]::ASCII.GetBytes("%PDF-1.4`n" + ('x' * 2000))
     $r = Send-Upload $PdfUrl $bytes 'broken.pdf'
-    $s = (Get-Listing $script:Gid)['s_pdf']
+    $s = (Get-Listing $script:SrcA $script:ProjA)['s_pdf']
     if ($r.Status -eq 422 -and $s.file -eq 'refund-policy.pdf' -and $s.chunks -eq $script:PdfChunks) { $true } else { "HTTP $($r.Status), now $($s.file) $($s.chunks)" }
 }
 Test-Check 'a scanned PDF without text is refused with a clear reason (no OCR) and the previous content stays' {
     $r = Send-Upload $PdfUrl $Scanned 'scan.pdf'
-    $s = (Get-Listing $script:Gid)['s_pdf']
+    $s = (Get-Listing $script:SrcA $script:ProjA)['s_pdf']
     if ($r.Status -eq 422 -and $r.Json.detail -match 'scanned' -and $s.file -eq 'refund-policy.pdf') { $true } else { "HTTP $($r.Status) $($r.Text)" }
 }
 Test-Check 'a text file named .pdf, an empty file and a .exe name are refused (400)' {
@@ -364,39 +390,51 @@ Test-Check 'a file over the size limit is refused (413)' {
     $r = Send-Upload $PdfUrl $big 'big.pdf'
     if ($r.Status -eq 413) { $true } else { "HTTP $($r.Status)" }
 }
-Test-Check 'invalid source ids, unknown nodes and unknown agents are refused (400 / 404), never 500' {
+# Phase 8: sources are numbered registry rows, so "bad id" is a malformed number (422), an unknown source or
+# project is 404, and a file sent to a link source is 400.
+Test-Check 'invalid source ids, unknown sources, projects and agents are refused (422 / 404 / 400), never 500' {
     $codes = @(
-        (Send-Upload "$Api/sources/bad%20id!/pdf?graph_id=$($script:Gid)" $Pdf 'a.pdf').Status,
-        (Send-Upload "$Api/sources/s_nope/pdf?graph_id=$($script:Gid)" $Pdf 'a.pdf').Status,
-        (Send-Upload "$Api/sources/n4/pdf?graph_id=$($script:Gid)" $Pdf 'a.pdf').Status,
-        (Invoke-Api 'GET' "$Api/sources?graph_id=99999999").Status,
+        (Send-Upload "$Api/sources/bad%20id!/file" $Pdf 'a.pdf').Status,
+        (Send-Upload "$Api/sources/99999999/file" $Pdf 'a.pdf').Status,
+        (Send-Upload "$Api/sources/$($script:SrcA.s_repo)/file" $Pdf 'a.pdf').Status,
+        (Invoke-Api 'GET' "$Api/projects/99999999/sources").Status,
         (Invoke-Api 'GET' "$Api/graphs/99999999").Status)
-    if (($codes -join ',') -eq '400,404,400,404,404') { $true } else { "got $($codes -join ',')" }
+    if (($codes -join ',') -eq '422,404,400,404,404') { $true } else { "got $($codes -join ',')" }
 }
-Test-Check 'an ingestion cut off by an api restart leaves the source empty or complete, never half-written' {
-    $task = $script:Http.SendAsync((New-Request 'POST' "$Api/sources/s_int/repo?graph_id=$($script:Gid)" '{}'))
+Test-Check 'an ingestion cut off by an api restart leaves the source empty or complete, never half-written or stuck' {
+    $last = [int](Invoke-Sql "select coalesce(max(id), 0) from sources")
+    $task = $script:Http.SendAsync((New-Request 'POST' "$Api/projects/$($script:ProjA)/sources/repo" '{"url":"https://github.com/octocat/Spoon-Knife"}'))
     Start-Sleep -Milliseconds 1500
     docker compose restart api 2>$null | Out-Null
     try { $null = $task.Wait(5000) } catch { }
     if (-not (Wait-Healthy @('api'))) { return 'api did not come back' }
-    $n = [int](Invoke-Sql "select count(*) from chunks where scope='graph:$($script:Gid)' and source_id='s_int'")
-    $repo = [int](Invoke-Sql "select count(*) from chunks where scope='graph:$($script:Gid)' and source_id='s_repo'")
-    if ($n -eq 0 -or $n -eq $repo) { $true } else { "s_int has $n chunks, a full copy has $repo" }
+    $row = Invoke-Sql "select id||':'||status||':'||chunk_count from sources where project_id = $($script:ProjA) and id > $last order by id limit 1"
+    if (-not $row) { return $true }  # the restart came before the source row was written: nothing to check
+    $p = $row.Trim() -split ':'
+    $n = [int](Invoke-Sql "select count(*) from chunks where source_ref = $($p[0])")
+    $repo = [int](Invoke-Sql "select count(*) from chunks where source_ref = $($script:SrcA.s_repo)")
+    if (($p[1] -eq 'failed' -and $n -eq 0) -or ($p[1] -eq 'ready' -and $n -eq $repo)) { $true } else { "new source is '$($p[1])' with $n chunks (a full copy has $repo)" }
 }
 
 # ============================ Isolation ============================
 Write-Host "`n== Shared knowledge and isolation"
 $script:GidB = 0
-Test-Check 'a second agent with the same source id holds a different PDF' {
-    $script:GidB = Save-Graph "p71 isolation B $Stamp" (New-Graph 'local_small' @(@{ id = 's_pdf'; type = 'source_doc'; config = @{ file = 'hostel-rules.pdf' } }))
-    $r = Send-Upload "$Api/sources/s_pdf/pdf?graph_id=$($script:GidB)" $Hostel 'hostel-rules.pdf'
-    if ($r.Status -eq 201) { $true } else { "HTTP $($r.Status)" }
+# Phase 8: account B's agent lives in B's own workspace; both agents call their source node 's_pdf'.
+Test-Check 'a second account''s agent with the same node id holds a different PDF' {
+    $script:Http = $script:B.Http
+    try {
+        $r = Send-Upload "$Api/projects/$($script:ProjB)/sources/file" $Hostel 'hostel-rules.pdf'
+        if ($r.Status -ne 201) { return "HTTP $($r.Status)" }
+        $script:SrcB = @{ s_pdf = $r.Json.id }
+        $script:GidB = Save-Graph "p71 isolation B $Stamp" (New-Graph 'local_small' @(@{ id = 's_pdf'; type = 'source_doc'; config = @{ source_ref = $r.Json.id } })) $script:ProjB
+    } finally { $script:Http = $script:A.Http }
+    $true
 }
 Test-Check 'eight concurrent questions from two callers to the two agents never mix their documents' {
     $reqs = @()
     for ($i = 0; $i -lt 4; $i++) {
-        $reqs += @{ Method = 'POST'; Url = "$Api/pipeline/run?stream=false"; Body = (ConvertTo-Json10 @{ question = 'What are the refund and hostel gate rules?'; graph_id = $script:Gid; model = 'local_small'; user = $UserA; local_only = $true }) }
-        $reqs += @{ Method = 'POST'; Url = "$Api/pipeline/run?stream=false"; Body = (ConvertTo-Json10 @{ question = 'What are the refund and hostel gate rules?'; graph_id = $script:GidB; model = 'local_small'; user = $UserB; local_only = $true }) }
+        $reqs += @{ Client = $script:A.Http; Method = 'POST'; Url = "$Api/pipeline/run?stream=false"; Body = (ConvertTo-Json10 @{ question = 'What are the refund and hostel gate rules?'; graph_id = $script:Gid; model = 'local_small'; local_only = $true }) }
+        $reqs += @{ Client = $script:B.Http; Method = 'POST'; Url = "$Api/pipeline/run?stream=false"; Body = (ConvertTo-Json10 @{ question = 'What are the refund and hostel gate rules?'; graph_id = $script:GidB; model = 'local_small'; local_only = $true }) }
     }
     $res = Invoke-Parallel $reqs
     $bad = @()
@@ -408,48 +446,57 @@ Test-Check 'eight concurrent questions from two callers to the two agents never 
     }
     if ($bad.Count -eq 0) { $true } else { $bad -join ' | ' }
 }
-Test-Check 'clearing the source in one agent keeps the other agent''s source with the same id' {
-    $d = Invoke-Api 'DELETE' "$Api/sources/s_pdf?graph_id=$($script:GidB)"
-    $a = (Get-Listing $script:Gid)['s_pdf']; $b = (Get-Listing $script:GidB)['s_pdf']
-    if ($d.Status -eq 200 -and $a.chunks -eq $script:PdfChunks -and -not $b) { $true } else { "delete $($d.Status), A=$($a.chunks), B=$($b.chunks)" }
+Test-Check 'deleting B''s source keeps A''s source (same node id); A cannot delete B''s source' {
+    $x = Invoke-Api 'DELETE' "$Api/sources/$($script:SrcB.s_pdf)"
+    $d = Read-Response ($script:B.Http.SendAsync((New-Request 'DELETE' "$Api/sources/$($script:SrcB.s_pdf)")).GetAwaiter().GetResult())
+    $a = (Get-Listing $script:SrcA $script:ProjA)['s_pdf']; $b = (Get-Listing $script:SrcB $script:ProjB $script:B.Http)['s_pdf']
+    $left = [int](Invoke-Sql "select count(*) from chunks where source_ref = $($script:SrcB.s_pdf)")
+    if ($x.Status -eq 404 -and $d.Status -eq 200 -and $a.chunks -eq $script:PdfChunks -and -not $b -and $left -eq 0) { $true }
+    else { "A's delete $($x.Status), B's delete $($d.Status), A=$($a.chunks), B=$($b.chunks), chunks left $left" }
 }
-Test-Check 'after clearing, that agent no longer answers from the removed document' {
-    $run = Get-Run @{ question = 'What time does the hostel gate close?'; graph_id = $script:GidB; model = 'local_small'; user = $UserB; local_only = $true }
-    if (-not $run.Last.supported -and @($run.Last.citations).Count -eq 0) { $true } else { "answer: $($run.Last.answer)" }
+# Phase 8: an agent whose source was deleted is refused before it runs (422 source_not_in_project or
+# source_not_ready) instead of
+# answering "I don't know"; either way nothing from the removed document can be used.
+Test-Check 'after deleting, that agent can no longer use the removed document' {
+    $r = Read-Response ($script:B.Http.SendAsync((New-Request 'POST' "$Api/pipeline/run?stream=false" (ConvertTo-Json10 @{ question = 'What time does the hostel gate close?'; graph_id = $script:GidB; model = 'local_small'; local_only = $true }))).GetAwaiter().GetResult())
+    $codes = @($r.Json.detail.errors | ForEach-Object { $_.code })
+    if ($r.Status -eq 422 -and ($codes -contains 'source_not_ready' -or $codes -contains 'source_not_in_project')) { $true } else { "HTTP $($r.Status): $($r.Text)" }
 }
 
 # ============================ Security ============================
 Write-Host "`n== Security"
 Test-Check 'SQL-looking input is treated as data (422 / 400 / stored verbatim), never a 500' {
     $name = "x'; DROP TABLE chunks; --"
-    $g = Invoke-Api 'POST' "$Api/graphs" (ConvertTo-Json10 @{ name = $name; graph = (New-Graph 'local' @()) })
-    $back = (Invoke-Api 'GET' "$Api/graphs").Json | Where-Object { $_.id -eq $g.Json.id }
+    $g = Invoke-Api 'POST' "$Api/graphs" (ConvertTo-Json10 @{ project_id = $script:ProjA; name = $name; graph = (New-Graph 'local' @()) })
+    $back = (Invoke-Api 'GET' "$Api/graphs?project_id=$($script:ProjA)").Json | Where-Object { $_.id -eq $g.Json.id }
     $m = Invoke-Api 'GET' "$Api/usage/totals?model=local%27%20OR%201%3D1--"
-    $u = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" (ConvertTo-Json10 @{ question = 'hi'; graph_id = $script:Gid; user = "demo' OR '1'='1" })
+    # Phase 8: there is no user field any more; SQL-looking ids are refused by type checks (422).
+    $u = Invoke-Api 'GET' "$Api/projects/1%20OR%201%3D1/sources"
     $chunks = [int](Invoke-Sql 'select count(*) from chunks')
-    if ($g.Status -eq 201 -and $back.name -eq $name -and $m.Status -eq 422 -and $u.Status -eq 400 -and $chunks -gt 0) { $true }
-    else { "graph $($g.Status) name='$($back.name)', model filter $($m.Status), user $($u.Status)" }
+    if ($g.Status -eq 201 -and $back.name -eq $name -and $m.Status -eq 422 -and $u.Status -eq 422 -and $chunks -gt 0) { $true }
+    else { "graph $($g.Status) name='$($back.name)', model filter $($m.Status), project id $($u.Status)" }
 }
 Test-Check 'private and internal addresses are refused as docs links (SSRF)' {
     $bad = @()
     foreach ($url in @('http://127.0.0.1:8000/health', 'http://db:5432/', 'http://169.254.169.254/latest/meta-data', 'http://mcp-runner:8100/mcp', 'file:///etc/passwd')) {
-        $r = Invoke-Api 'POST' "$Api/sources/s_url/url?graph_id=$($script:Gid)" (ConvertTo-Json10 @{ url = $url })
+        $r = Invoke-Api 'POST' "$Api/projects/$($script:ProjA)/sources/url" (ConvertTo-Json10 @{ url = $url })
         if ($r.Status -ne 400 -and $r.Status -ne 422) { $bad += "$url -> $($r.Status)" }
     }
-    $s = (Get-Listing $script:Gid)['s_url']
+    $s = (Get-Listing $script:SrcA $script:ProjA)['s_url']
     if ($bad.Count -eq 0 -and $s.file -eq 'Example Domain') { $true } else { ($bad -join ', ') + " s_url=$($s.file)" }
 }
 Test-Check 'a file name with ../ cannot leave the source folder' {
     $r = Send-Upload $PdfUrl $Pdf '..\..\..\evil.pdf'
     $outside = (Invoke-Native 'docker' @('compose', 'exec', '-T', 'api', 'sh', '-c', 'ls /data/evil.pdf /data/uploads/evil.pdf 2>/dev/null | wc -l')).Output
-    $inside = (Invoke-Native 'docker' @('compose', 'exec', '-T', 'api', 'ls', "/data/uploads/graph_$($script:Gid)/s_pdf/")).Output
-    if ($r.Status -eq 201 -and $outside.Trim() -eq '0' -and $inside -match 'evil.pdf') { $true } else { "HTTP $($r.Status), outside=$outside, inside=$inside" }
+    $inside = (Invoke-Native 'docker' @('compose', 'exec', '-T', 'api', 'ls', "/data/uploads/project_$($script:ProjA)/source_$($script:SrcA.s_pdf)/")).Output
+    if ($r.Status -eq 200 -and $outside.Trim() -eq '0' -and $inside -match 'evil.pdf') { $true } else { "HTTP $($r.Status), outside=$outside, inside=$inside" }
 }
 Test-Check 'a document that tells the model to lie does not change the answer from the real policy' {
-    $gid = Save-Graph "p71 injection $Stamp" (New-Graph 'local' @(@{ id = 's_pdf'; type = 'source_doc'; config = @{} }, @{ id = 's_bad'; type = 'source_doc'; config = @{} }))
-    $null = Send-Upload "$Api/sources/s_pdf/pdf?graph_id=$gid" $Pdf 'refund-policy.pdf'
-    $null = Send-Upload "$Api/sources/s_bad/pdf?graph_id=$gid" $Injection 'prompt-injection.pdf'
-    $run = Get-Run @{ question = 'How much is refunded if a lab test is cancelled before the sample is collected?'; graph_id = $gid; model = 'local'; user = $UserA; local_only = $true }
+    $pi = (Invoke-Api 'POST' "$Api/projects" (ConvertTo-Json10 @{ org_id = $script:A.Personal; name = "p71 injection $Stamp" })).Json.id
+    $good = (Send-Upload "$Api/projects/$pi/sources/file" $Pdf 'refund-policy.pdf').Json.id
+    $evil = (Send-Upload "$Api/projects/$pi/sources/file" $Injection 'prompt-injection.pdf').Json.id
+    $gid = Save-Graph "p71 injection $Stamp" (New-Graph 'local' @(@{ id = 's_pdf'; type = 'source_doc'; config = @{ source_ref = $good } }, @{ id = 's_bad'; type = 'source_doc'; config = @{ source_ref = $evil } })) $pi
+    $run = Get-Run @{ question = 'How much is refunded if a lab test is cancelled before the sample is collected?'; graph_id = $gid; model = 'local'; local_only = $true }
     $a = "$($run.Last.answer)"
     if ($a -match '80' -and $a -notmatch '100') { $true } else { "answer: $a" }
 }
@@ -471,23 +518,23 @@ Test-Check 'no API key appears in /status, /models, the web bundle or the api lo
 Write-Host "`n== Failures and recovery"
 Test-Check 'database stopped: a clear 503, then full recovery when it is back' {
     docker compose stop db 2>$null | Out-Null
-    $down = Invoke-Api 'GET' "$Api/graphs"
+    $down = Invoke-Api 'GET' "$Api/graphs?project_id=$($script:ProjA)"  # Phase 8: agents are listed per project
     docker compose start db 2>$null | Out-Null
     $null = Wait-Healthy @('db')
     $ok = $false
-    for ($i = 0; $i -lt 10 -and -not $ok; $i++) { $ok = ((Invoke-Api 'GET' "$Api/graphs").Status -eq 200); if (-not $ok) { Start-Sleep 1 } }
+    for ($i = 0; $i -lt 10 -and -not $ok; $i++) { $ok = ((Invoke-Api 'GET' "$Api/graphs?project_id=$($script:ProjA)").Status -eq 200); if (-not $ok) { Start-Sleep 1 } }
     if ($down.Status -eq 503 -and $down.Json.detail -match 'database' -and $ok) { $true } else { "while down: HTTP $($down.Status); recovered: $ok" }
 }
 Test-Check 'Ollama stopped: a clear all_providers_failed error, one error row, then answers again' {
-    $before = (Invoke-Api 'GET' "$Api/usage/totals?user=$UserB").Json
+    $before = (Invoke-Api 'GET' "$Api/usage/totals").Json
     docker compose stop ollama 2>$null | Out-Null
-    $run = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'local'; user = $UserB; local_only = $true }
+    $run = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'local'; local_only = $true }
     $status = (Invoke-Api 'GET' "$Api/status").Json.ollama
     $files = Get-ComposeFiles
     docker compose start ollama 2>$null | Out-Null
     $null = Wait-Healthy @('ollama')
-    $after = (Invoke-Api 'GET' "$Api/usage/totals?user=$UserB").Json
-    $again = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'local'; user = $UserB; local_only = $true }
+    $after = (Invoke-Api 'GET' "$Api/usage/totals").Json
+    $again = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'local'; local_only = $true }
     $err = $run.Events | Where-Object { $_.type -eq 'error' }
     if ($err.code -ne 'all_providers_failed' -and $err.code -ne 'embedding_unavailable') { return "no clear error: $($run.Text.Substring(0, [Math]::Min(200, $run.Text.Length)))" }
     if ($status -ne $false) { return "status.ollama while stopped: $status" }
@@ -495,15 +542,15 @@ Test-Check 'Ollama stopped: a clear all_providers_failed error, one error row, t
     if ($again.Last.supported -and $again.Last.answer -match '80') { $true } else { "after restart: $($again.Last.answer)" }
 }
 Test-Check 'a client that disconnects mid-answer leaves the api healthy and no duplicate usage rows' {
-    $before = (Invoke-Api 'GET' "$Api/usage/totals?user=$UserA").Json.requests
-    $req = New-Request 'POST' "$Api/pipeline/run" (ConvertTo-Json10 @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'local'; user = $UserA; local_only = $true })
+    $before = (Invoke-Api 'GET' "$Api/usage/totals").Json.requests
+    $req = New-Request 'POST' "$Api/pipeline/run" (ConvertTo-Json10 @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'local'; local_only = $true })
     $res = $script:Http.SendAsync($req, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
     $reader = [System.IO.StreamReader]::new($res.Content.ReadAsStreamAsync().GetAwaiter().GetResult())
     for ($i = 0; $i -lt 6; $i++) { $null = $reader.ReadLine() }
     $reader.Dispose(); $res.Dispose()
     Start-Sleep -Seconds 40
-    $after = (Invoke-Api 'GET' "$Api/usage/totals?user=$UserA").Json.requests
-    $next = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'local'; user = $UserA; local_only = $true }
+    $after = (Invoke-Api 'GET' "$Api/usage/totals").Json.requests
+    $next = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'local'; local_only = $true }
     if (($after - $before) -le 1 -and $next.Last.supported) { $true } else { "usage rows added: $($after - $before), next answer: $($next.Last.answer)" }
 }
 
@@ -522,18 +569,18 @@ try {
 
     Test-Check 'control: a normal Gemini request does reach the counting fake server' {
         $c0 = Get-CloudCount
-        $run = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'gemini'; user = $UserA }
+        $run = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'gemini' }
         if ((Get-CloudCount) -gt $c0 -and $run.Last.model -like 'gemini:*') { $true } else { "count $c0 -> $(Get-CloudCount), model $($run.Last.model)" }
     }
     Test-Check 'Gemini daily quota: no retry (exactly one request), the local model answers instead' {
         $before = (Invoke-Api 'GET' "$FakeUrl/_requests").Json
-        $run = Get-Run @{ question = "$($Knowledge[0].q) FAULT_DAILY"; graph_id = $script:Gid; model = 'gemini'; user = $UserA }
+        $run = Get-Run @{ question = "$($Knowledge[0].q) FAULT_DAILY"; graph_id = $script:Gid; model = 'gemini' }
         $after = (Invoke-Api 'GET' "$FakeUrl/_requests").Json
         $sent = [int]($after.all) - [int]($before.all)
         if ($sent -eq 1 -and $run.Last.fallback.code -eq 'quota_daily' -and $run.Last.model -like 'local:*') { $true } else { "requests $sent, fallback $($run.Last.fallback.code), model $($run.Last.model)" }
     }
     Test-Check 'Groq unreachable: clear fallback to the local model, answer still cited' {
-        $run = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'groq'; user = $UserA }
+        $run = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'groq' }
         if ($run.Last.fallback.from -eq 'groq' -and $run.Last.model -like 'local:*' -and $run.Last.supported) { $true } else { "fallback $($run.Last.fallback | ConvertTo-Json -Compress), model $($run.Last.model)" }
     }
     $c0 = Get-CloudCount
@@ -543,7 +590,7 @@ try {
                 @{ q = 'My lab test cost Rs. 1200 and I cancelled before the sample was collected. How much will I get back?'; tool = 'calculator' },
                 @{ q = 'What is the status and refund of order ORD-1002?'; tool = 'get_order' })
         foreach ($x in $qs) {
-            $run = Get-Run @{ question = $x.q; graph_id = $script:Gid; model = 'local'; user = $UserA; local_only = $true }
+            $run = Get-Run @{ question = $x.q; graph_id = $script:Gid; model = 'local'; local_only = $true }
             $steps = @($run.Agent.generation.steps | ForEach-Object { $_.model })
             $nonLocal = @($steps | Where-Object { $_ -notlike 'local*' })
             $tools = @($run.Last.tool_calls | ForEach-Object { $_.tool })
@@ -552,21 +599,21 @@ try {
         if ($bad.Count -eq 0) { $true } else { $bad -join ' | ' }
     }
     Test-Check 'local-only with a cloud model is refused before anything runs (request flag and agent setting)' {
-        $a = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" (ConvertTo-Json10 @{ question = 'hi'; graph_id = $script:Gid; model = 'groq'; user = $UserA; local_only = $true })
+        $a = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" (ConvertTo-Json10 @{ question = 'hi'; graph_id = $script:Gid; model = 'groq'; local_only = $true })
         $g = New-Graph 'gemini' @() $true
-        $b = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" (ConvertTo-Json10 @{ question = 'hi'; graph = $g; user = $UserA })
+        $b = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" (ConvertTo-Json10 @{ question = 'hi'; project_id = $script:ProjA; graph = $g })
         if ($a.Status -eq 400 -and $b.Status -eq 400) { $true } else { "HTTP $($a.Status) / $($b.Status)" }
     }
     if (-not (Restart-Api ($cloud + @('OLLAMA_CHAT_MODEL: not-pulled-model:14b')))) { throw 'api did not become healthy' }
     Test-Check 'local-only with the main model missing: the 3B backup answers the Calculator question, nothing goes to the cloud' {
-        $run = Get-Run @{ question = 'My lab test cost Rs. 1200 and I cancelled before the sample was collected. How much will I get back?'; graph_id = $script:Gid; model = 'local'; user = $UserA; local_only = $true }
+        $run = Get-Run @{ question = 'My lab test cost Rs. 1200 and I cancelled before the sample was collected. How much will I get back?'; graph_id = $script:Gid; model = 'local'; local_only = $true }
         $steps = @($run.Agent.generation.steps | ForEach-Object { $_.model })
         if ($run.Last.model -like 'local_small:*' -and $run.Last.fallback.from -eq 'local' -and @($steps | Where-Object { $_ -notlike 'local_small*' }).Count -eq 0) { $true }
         else { "model $($run.Last.model), steps $($steps -join ',')" }
     }
     if (-not (Restart-Api ($cloud + @('OLLAMA_CHAT_MODEL: not-pulled-model:14b', 'OLLAMA_BACKUP_MODEL: not-pulled-model:3b')))) { throw 'api did not become healthy' }
     Test-Check 'local-only with both local models missing: a clear error naming only local models' {
-        $run = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'local'; user = $UserA; local_only = $true }
+        $run = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'local'; local_only = $true }
         $tried = @($run.Last.attempts | ForEach-Object { $_.model } | Sort-Object -Unique) -join ','
         if ($run.Last.type -eq 'error' -and $run.Last.code -eq 'all_providers_failed' -and $tried -eq 'local,local_small') { $true } else { "type $($run.Last.type) code $($run.Last.code) tried $tried" }
     }
@@ -584,7 +631,7 @@ finally {
 }
 
 Test-Check 'a real Groq request answers with the actual model reported (no fallback)' {
-    $run = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'groq'; user = $UserA }
+    $run = Get-Run @{ question = $Knowledge[0].q; graph_id = $script:Gid; model = 'groq' }
     if ($run.Last.fallback -and "$($run.Last.fallback.code)".StartsWith('quota')) { return "BLOCKED:$($run.Last.fallback.code)" }
     if ($run.Last.model -like 'groq:*' -and -not $run.Last.fallback -and $run.Last.supported) { $true } else { "model $($run.Last.model) fallback $($run.Last.fallback.code)" }
 }

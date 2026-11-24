@@ -80,8 +80,14 @@ function ConvertFrom-Sse([string]$Text) {
     , $events
 }
 
+# Since Phase 8 a graph runs inside a project and its source nodes point at the project's sources:
+# the example graphs' source nodes are linked to the PDF this script uploads.
 function Get-Graph([string]$Name) {
-    Get-Content "api\app\pipeline\examples\$Name.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+    $g = Get-Content "api\app\pipeline\examples\$Name.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($n in $g.nodes) {
+        if ($n.type -like 'source_*') { $n.config | Add-Member -NotePropertyName source_ref -NotePropertyValue $script:SrcId -Force }
+    }
+    $g
 }
 
 function ConvertTo-Body($Graph, [string]$QuestionJson, [string]$Language) {
@@ -89,7 +95,7 @@ function ConvertTo-Body($Graph, [string]$QuestionJson, [string]$Language) {
     $g = $Graph | ConvertTo-Json -Depth 10 -Compress
     if (-not $QuestionJson) { return $g }
     $lang = if ($Language) { ",`"language`":`"$Language`"" } else { '' }
-    "{`"question`":$QuestionJson$lang,`"graph`":$g}"
+    "{`"question`":$QuestionJson$lang,`"project_id`":$($script:Who.Project),`"graph`":$g}"
 }
 
 # One sorted line per node and edge, so two graphs compare equal even if key order differs
@@ -129,6 +135,14 @@ $ExpectedOrder = 'input:running input:done guardrails:running guardrails:done ro
 # ---------- Preflight ----------
 $script:ApiUp = $false
 try { $script:ApiUp = ((Invoke-Api 'GET' "$Api/health").Json.ok -eq $true) } catch { }
+if ($script:ApiUp) {
+    # Phase 8: sign in as a fresh test account (real registration, own session and CSRF token) and give its
+    # project one PDF source, which the example graphs' source nodes use.
+    . "$PSScriptRoot\_session.ps1"
+    $script:Who = New-TestSession 'p2'
+    $script:Http = $script:Who.Http
+    $script:SrcId = Add-ProjectFile $script:Who 'samples\refund-policy.pdf'
+}
 if (-not $script:ApiUp) { Write-Host 'The api is not reachable on :8000. Run: docker compose up -d --build' -ForegroundColor Red }
 
 # ---------- Graph format ----------
@@ -138,11 +152,11 @@ Test-Check 'GET /pipeline/default returns the five main blocks' {
     if (($types -join ',') -eq 'input,guardrails,router,agent,output') { $true } else { "got $($types -join ',')" }
 }
 Test-Check 'default graph validates' {
-    $r = Invoke-Api 'POST' "$Api/pipeline/validate" (ConvertTo-Body (Get-Graph 'default'))
+    $r = Invoke-Api 'POST' "$Api/pipeline/validate?project_id=$($script:Who.Project)" (ConvertTo-Body (Get-Graph 'default'))
     if ($r.Json.valid -eq $true) { $true } else { $r.Text }
 }
 Test-Check 'handoff example graph (2 sources, 2 tools) validates' {
-    $r = Invoke-Api 'POST' "$Api/pipeline/validate" (ConvertTo-Body (Get-Graph 'full'))
+    $r = Invoke-Api 'POST' "$Api/pipeline/validate?project_id=$($script:Who.Project)" (ConvertTo-Body (Get-Graph 'full'))
     if ($r.Json.valid -eq $true) { $true } else { $r.Text }
 }
 
@@ -167,7 +181,7 @@ foreach ($case in $broken) {
     Test-Check $case.Name {
         $g = Get-Graph 'full'
         & $case.Break $g
-        $r = Invoke-Api 'POST' "$Api/pipeline/validate" (ConvertTo-Body $g)
+        $r = Invoke-Api 'POST' "$Api/pipeline/validate?project_id=$($script:Who.Project)" (ConvertTo-Body $g)
         $codes = Get-Codes $r
         if ($r.Json.valid -eq $false -and $codes -contains $case.Code -and $r.Json.errors[0].message) { $true }
         else { "valid=$($r.Json.valid), codes=$($codes -join ',')" }
@@ -266,9 +280,10 @@ Test-Check 'agent sees exactly the sources and tools drawn into it' {
     else { "sources=$(@($r.sources) -join ','), tools=$(@($r.tools) -join ',')" }
 }
 # Phase 2 checked a placeholder answer here. Phase 3 replaced it with real retrieval, so this now checks
-# the model-free path: connected sources with nothing stored must give "I don't know" without a model call.
-Test-Check 'agent with empty connected sources says it does not know, no model call' {
-    $run = Invoke-Run (Get-Graph 'full') '"What is the refund policy?"'
+# the model-free path. Since Phase 8 an agent can only connect ready project sources (an empty source is refused
+# before the run), so the path is reached by a question that no stored chunk matches: "I don't know", no model call.
+Test-Check 'agent whose connected sources hold nothing relevant says it does not know, no model call' {
+    $run = Invoke-Run (Get-Graph 'full') '"Who won the cricket world cup in 2011?"'
     $agentDone = @($run.Events | Where-Object { $_.stage -eq 'agent' -and $_.status -eq 'done' })[0]
     if ($agentDone.detail.model_called -eq $false -and $run.Result.supported -eq $false -and @($run.Result.citations).Count -eq 0) { $true }
     else { "model_called=$($agentDone.detail.model_called), answer=$($run.Result.answer)" }
@@ -278,7 +293,7 @@ Test-Check 'agent with empty connected sources says it does not know, no model c
 Write-Host "`n== Saved graphs (Postgres)"
 Test-Check 'save a graph, load it back unchanged, run it by graph_id' {
     $g = Get-Graph 'full'
-    $save = Invoke-Api 'POST' "$Api/graphs" ("{`"name`":`"verify_phase2`",`"graph`":$(ConvertTo-Body $g)}")
+    $save = Invoke-Api 'POST' "$Api/graphs" ("{`"project_id`":$($script:Who.Project),`"name`":`"verify_phase2`",`"graph`":$(ConvertTo-Body $g)}")
     if ($save.Status -ne 201) { return "save HTTP $($save.Status): $($save.Text)" }
     $id = $save.Json.id
     $loaded = (Invoke-Api 'GET' "$Api/graphs/$id").Json
@@ -290,7 +305,7 @@ Test-Check 'save a graph, load it back unchanged, run it by graph_id' {
 Test-Check 'an invalid graph is not saved (422)' {
     $g = Get-Graph 'full'
     $g.edges = @($g.edges | Where-Object { $_.from -ne 't1' })
-    $r = Invoke-Api 'POST' "$Api/graphs" ("{`"name`":`"broken`",`"graph`":$(ConvertTo-Body $g)}")
+    $r = Invoke-Api 'POST' "$Api/graphs" ("{`"project_id`":$($script:Who.Project),`"name`":`"broken`",`"graph`":$(ConvertTo-Body $g)}")
     if ($r.Status -eq 422) { $true } else { "HTTP $($r.Status)" }
 }
 Test-Check 'unknown graph id returns 404' {

@@ -8,11 +8,17 @@ shows its citations, the model used, and its estimated cost.
 Built for **AI for Bharat**: colleges, clinics and small offices that want an assistant over
 their own files, with control over privacy and spending.
 
+Since Phase 8 it is a **collaborative knowledge platform**: people register and sign in, create a company
+workspace, invite colleagues, and work in projects. Knowledge is added once to a project and shared by
+everyone on it; agents are shared; every person's conversations are private and persistent. Each workspace
+and project is isolated from the others on the server side.
+
 ![The builder after a run: the calculator and the PDF were cited](docs/screenshots/builder-run-answer.png)
 
-Five screens, all on real data from the api: **Builder** (draw and run agents), **Chat** (talk to the
-quick-chat sources or any saved agent), **Knowledge** (upload and manage documents), **Usage** (requests,
-tokens and cost per user and model) and **Status** (containers, models, tools). More screenshots, all taken
+The screens, all on real data from the api: a public **landing page**, **sign-in and registration**, and
+inside a workspace **Overview**, **Projects**, **Knowledge** (the project's shared sources), **Agents** (the
+builder), **Chat** (private conversations with the project knowledge or a shared agent), **Usage**,
+**Members** (company workspaces), **Settings** and **Status**. More screenshots, all taken
 from the running app by [scripts/ui_journeys.py](scripts/ui_journeys.py): [docs/screenshots](docs/screenshots).
 A step-by-step demo: [docs/DEMO.md](docs/DEMO.md).
 
@@ -47,13 +53,21 @@ docker compose exec ollama ollama pull bge-m3
 Gemini and Groq need `GEMINI_API_KEY` and `GROQ_API_KEY` in `.env`; without them the app still works
 with the two local models (and the Status page says which models are ready).
 
+Open http://localhost:3000 and choose **Get started** to create the first account; it gets a personal
+workspace with a first project. Data from before Phase 8 is kept in a hidden "Legacy workspace (imported)"
+until an operator gives it to an account:
+
+```powershell
+docker compose exec api python -m app.admin claim-legacy you@example.com
+```
+
 ## Tests
 
 ```bash
 pip install -r tests/requirements.txt -r api/requirements.txt
 pytest tests                      # unit tests; db tests skip without TEST_DATABASE_URL
 cd web && npm test                # canvas model, SSE highlighting, formatting (Vitest)
-python scripts/ui_journeys.py     # real browser journeys in headless Edge or Chrome, saves screenshots
+python scripts/ui_journeys.py     # four people in four browser profiles (owner, contributor, consumer, outsider)
 python scripts/model_matrix.py    # the same 9 questions on all 4 models, real providers (docs/results)
 python scripts/load_test.py       # controlled load test (docs/PERFORMANCE_BENCHMARKS.md)
 bash scripts/verify_phase1.sh     # checks the running Docker stack end to end (Linux/macOS/Git Bash)
@@ -71,7 +85,13 @@ powershell -ExecutionPolicy Bypass -File scripts\verify_models.ps1              
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase6.ps1                  # builder, validation, SSE per node, dashboard
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase7.ps1                  # tools, MCP security, source status, UI journeys
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase7_1.ps1                # persistence, integrity, privacy, recovery, security
+powershell -ExecutionPolicy Bypass -File scripts\verify_phase8.ps1                  # accounts, workspaces, invitations, isolation, shared knowledge
+powershell -ExecutionPolicy Bypass -File scripts\verify_all.ps1                     # all of the above in order, with a summary
 ```
+
+Since Phase 8 every script signs in as a fresh test account through the real `/auth/register` (its own
+session cookie and CSRF token, a random password that is never printed) and works in that account's own
+project; there is no test-only way around authentication.
 
 A run is only valid while Docker Desktop and the stack are up: the scripts report SKIP (never PASS) for checks
 they could not reach, and `verify_phase7_1.ps1` exits with code 2 if the api was not reachable at all.
@@ -263,18 +283,44 @@ collected. How much will I get back?" plans `calculator("1200 * 80%")`, gets `96
 "You will get back 80 percent of the test amount, which is Rs. 960 [1][4]", citing the refund PDF and the
 calculator. "What is the status of order ORD-1002?" calls `get_order` and cites `orders-db.get_order`.
 
+## Accounts, workspaces and shared projects (Phase 8)
+
+Plan, implementation, security and demo: [docs/PHASE_8_PLAN.md](docs/PHASE_8_PLAN.md),
+[docs/PHASE_8_IMPLEMENTATION.md](docs/PHASE_8_IMPLEMENTATION.md), [docs/PHASE_8_SECURITY.md](docs/PHASE_8_SECURITY.md),
+[docs/PHASE_8_DEMO.md](docs/PHASE_8_DEMO.md).
+
+- **Accounts:** registration and sign-in with an email and a password (Argon2id). The session is an
+  HttpOnly cookie (`SameSite=Lax`; set `COOKIE_SECURE=true` behind HTTPS) that the server stores only as a
+  hash; every change also needs the CSRF token from `/auth/me`. Repeated wrong passwords are slowed down.
+- **Workspaces:** everyone has a personal workspace; anyone can create a **company** workspace and becomes
+  its owner. Roles: **owner** (everything, including roles), **admin** (members, invitations, projects),
+  **member** (works in the projects they are given).
+- **Invitations:** an owner or admin creates a single-use link for one email address (no email is sent:
+  share the link yourself). The invited person signs in or registers with that email and accepts; an owner
+  or admin then **confirms** the membership.
+- **Projects:** each has its own members (**contributor** adds knowledge and agents, **viewer** reads and
+  asks), knowledge, agents and conversations. A project can be **local only**: no cloud model is ever used.
+- **Knowledge** is added once per project (PDF, Word, Markdown, TXT, CSV, Excel, a GitHub repo or a docs
+  page) and used by every agent of the project; agents point at sources instead of holding copies.
+- **Conversations** are private to the person who started them, stored with every answer, its citations,
+  model, tokens and cost, and follow-up questions see the recent turns.
+- **Usage** belongs to the person, workspace, project and agent of each request; members see their own,
+  owners and admins see the whole workspace.
+- **Isolation:** every request is checked on the server against the signed-in account (never a user id or
+  role sent by the browser); another workspace's or project's ids give 404, and removing someone takes effect
+  on their next request without signing them out.
+
 ## Chat, Knowledge, Usage and Status
 
-- **Chat:** pick "Quick chat" (the quick-chat sources from the Knowledge page plus the tools you switch on)
-  or any saved agent (it runs as drawn, over its own documents). Choose the model and the language, switch
-  **Local only** on, and ask. Each answer shows the five stages, tool calls, the answer with clickable
-  citation numbers, the model, tokens, cost, time, and the same tokens priced on the other models.
-- **Knowledge:** the quick chat's sources or a saved agent's: upload PDFs (drag and drop, with progress),
-  fetch docs links, download GitHub repos, see chunks, files and when each was indexed, or clear a source
-  (asks first; cannot be undone).
-- **Usage:** requests, tokens, estimated cost and answer time; filters by user, model and period (7 to 90
-  days); requests per day (India time, with a table view), cost and requests per model, requests and
-  tokens per user, and the latest answers.
+- **Chat:** ask the project's knowledge (all its ready sources) or one of its shared agents. Choose the
+  model and the language, switch **Local only** on, and ask. Each answer shows the five stages, tool calls,
+  the answer with clickable citation numbers, the model, tokens, cost and time. Conversations are listed on
+  the left and stay after sign-out and restarts.
+- **Knowledge:** the project's shared sources: upload files (drag and drop, with progress), fetch docs
+  links, download GitHub repos; see status, chunks, who added each and when; re-index, replace, download or
+  delete (asks first; cannot be undone). Viewers only read.
+- **Usage:** requests, tokens, estimated cost and answer time for you or, for owners and admins, the whole
+  workspace; by person, model, project and day (India time, with a table view), and the latest answers.
 - **Status:** health of the containers, which models are ready (and how to set up the others), prices,
   and the tools the MCP runner offers.
 
@@ -314,14 +360,14 @@ Audit, benchmarks and the Phase 8 plan: [docs/PHASE_7_1_AUDIT.md](docs/PHASE_7_1
 |--------------|-----|
 | `web`        | React app (chat, canvas, usage dashboard), served by nginx; forwards `/api` to `api` |
 | `api`        | FastAPI: runs the pipeline, ingests sources, wraps the models, logs usage |
-| `db`         | Postgres with pgvector: graphs, embeddings, users, usage |
+| `db`         | Postgres with pgvector: accounts, sessions, workspaces, projects, sources, embeddings, agents, conversations, usage |
 | `mcp-runner` | MCP tool server (`orders-db`, read-only tools), on its own network with no route to `db` |
 | `ollama`     | Local model and the embedding model |
 
 Networks: `data` (api, db, ollama), `tools` (api, mcp-runner), `frontend` (web, api).
 
-Left out on purpose to stay laptop-friendly (next steps): a mailer, and MinIO object storage
-(uploaded files sit in a Docker volume instead).
+Left out on purpose to stay laptop-friendly (next steps): a mailer (invitation links are shared by hand),
+and MinIO object storage (uploaded files sit in a Docker volume instead).
 
 ## Project layout
 
@@ -339,9 +385,11 @@ web/                 React frontend
 - A question that uses a tool costs two model calls (the tool plan and the answer). On Qwen 3 14B on this
   laptop the plan takes about 6-10 s once the model is loaded (about 20-35 s for the first one), so a tool
   answer takes 15-30 s locally; on Groq it takes 1-3 s.
-- There are no accounts yet: the user switcher names who the usage belongs to, and the api trusts that name.
-  Agents are kept apart from each other, but anyone who can reach the api can read every agent. Do not
-  expose it to a network before Phase 8 adds authentication.
+- Accounts and roles are checked on every request since Phase 8, but this is still a laptop deployment:
+  the ports are bound to `127.0.0.1`, there is no HTTPS, no email verification and no password reset by
+  email (an invitation is confirmed by an owner or admin instead), and the sign-in rate limit is kept in the
+  api's memory (it resets when the api restarts). Put it behind HTTPS with `COOKIE_SECURE=true` before
+  exposing it to a network.
 - Tools are chosen by simple, explainable router rules (a calculation, or a question about orders); a
   question phrased differently may not use a tool. The orders data is fictional.
 

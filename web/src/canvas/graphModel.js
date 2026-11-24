@@ -189,9 +189,10 @@ export function summary(type, config = {}) {
     case "guardrails":
       return (config.block || []).join(", ") || "no checks";
     case "source_doc":
-      return "url" in config ? config.url || "no link yet" : config.file || "no PDF yet";
     case "source_repo":
-      return config.url ? config.url.replace("https://github.com/", "") : "no repo yet";
+      // Phase 8: a source block points at a project source; its status line (chunks and title, or
+      // "Choose project knowledge") says everything, so there is no separate summary.
+      return "";
     case "tool_mcp":
       return `${config.server || "?"} · ${config.mode || "no mode"}`;
     case "tool_calculator":

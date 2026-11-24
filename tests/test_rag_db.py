@@ -25,15 +25,23 @@ def unit(seed: int) -> list[float]:
 def client(tmp_path_factory):
     import dataclasses
     from fastapi.testclient import TestClient
+    from app import knowledge
     from app.main import app
     from app.routes import sources
-
-    # Settings is loaded once per process, so point the upload route at a temp folder directly.
-    original = sources.settings
-    sources.settings = dataclasses.replace(original, upload_dir=str(tmp_path_factory.mktemp("uploads")))
+    # Settings is loaded once per process, so point the upload code at a temp folder directly.
+    original = knowledge.settings
+    temp = dataclasses.replace(original, upload_dir=str(tmp_path_factory.mktemp("uploads")))
+    knowledge.settings = sources.settings = temp
     with TestClient(app) as c:
         yield c
-    sources.settings = original
+    knowledge.settings = sources.settings = original
+
+
+@pytest.fixture(scope="module")
+def user(client):
+    from accounts import Account
+    from app.main import app
+    return Account(app, "p3_user")
 
 
 @pytest.fixture
@@ -71,45 +79,51 @@ def test_replace_source_replaces_old_chunks(store):
     assert info["chunks"] == 1 and info["file"] == "new.pdf"
 
 
-def test_upload_pdf_ingests_with_pages(client, store, monkeypatch):
+def test_upload_pdf_ingests_with_pages(user, monkeypatch):
     from app.rag import embeddings
     monkeypatch.setattr(embeddings, "embed", lambda texts: [unit(i) for i in range(len(texts))])
-    r = client.post("/sources/test_up/pdf", files={"file": ("refund-policy.pdf", make_pdf(REFUND_POLICY), "application/pdf")})
+    r = user.add_pdf(user.project, "refund-policy.pdf", make_pdf(REFUND_POLICY))
     assert r.status_code == 201, r.text
     body = r.json()
-    assert body["pages"] == 2 and body["chunks"] >= 2
-    assert client.get("/sources/test_up").json()["chunks"] == body["chunks"]
+    assert body["status"] == "ready" and body["chunk_count"] >= 2
+    assert user.get(f"/sources/{body['id']}").json()["chunk_count"] == body["chunk_count"]
     from app.db import get_conn
     with get_conn() as conn:
-        pages = {row[0] for row in conn.execute("SELECT page FROM chunks WHERE source_id = 'test_up'")}
+        pages = {row[0] for row in conn.execute("SELECT page FROM chunks WHERE source_ref = %s", (body["id"],))}
     assert pages == {1, 2}
 
 
-def test_upload_rejects_non_pdf(client):
-    r = client.post("/sources/test_up/pdf", files={"file": ("notes.pdf", b"hello, not a pdf", "application/pdf")})
+def test_upload_rejects_non_pdf(user):
+    r = user.add_pdf(user.project, "notes.pdf", b"hello, not a pdf")
     assert r.status_code == 400
-    r = client.post("/sources/test_up/pdf", files={"file": ("notes.txt", b"%PDF-1.4", "text/plain")})
-    assert r.status_code == 400
-
-
-def test_upload_rejects_bad_source_id(client):
-    r = client.post("/sources/bad id!/pdf", files={"file": ("a.pdf", make_pdf(REFUND_POLICY), "application/pdf")})
+    r = user.post(f"/projects/{user.project}/sources/file", files={"file": ("notes.exe", b"%PDF-1.4", "text/plain")})
     assert r.status_code == 400
 
 
-def test_upload_file_name_cannot_escape_folder(client, store, monkeypatch, tmp_path):
+def test_upload_to_an_unknown_project_is_404(user):
+    assert user.add_pdf(999999, "a.pdf", make_pdf(REFUND_POLICY)).status_code == 404
+
+
+def test_upload_file_name_cannot_escape_folder(user, monkeypatch):
+    from app import knowledge
     from app.rag import embeddings
-    from app.routes import sources
     monkeypatch.setattr(embeddings, "embed", lambda texts: [unit(i) for i in range(len(texts))])
-    r = client.post("/sources/test_esc/pdf", files={"file": ("../../evil.pdf", make_pdf(REFUND_POLICY), "application/pdf")})
-    assert r.status_code == 201 and r.json()["file"] == "evil.pdf"
+    r = user.add_pdf(user.project, "../../evil.pdf", make_pdf(REFUND_POLICY))
+    assert r.status_code == 201 and r.json()["title"] == "evil.pdf"
     from pathlib import Path
-    assert (Path(sources.settings.upload_dir) / "inline" / "test_esc" / "evil.pdf").exists()
-    assert not (Path(sources.settings.upload_dir).parent / "evil.pdf").exists()
-    r = client.post("/sources/test_esc/pdf", files={"file": ("..\\..\\win.pdf", make_pdf(REFUND_POLICY), "application/pdf")})
-    assert r.status_code == 201 and r.json()["file"] == "win.pdf"
+    root = Path(knowledge.settings.upload_dir)
+    assert (root / f"project_{user.project}" / f"source_{r.json()['id']}" / "evil.pdf").exists()
+    assert not (root.parent / "evil.pdf").exists()
+    r = user.add_pdf(user.project, r"..\..\win.pdf", make_pdf(REFUND_POLICY))
+    assert r.status_code == 201 and r.json()["title"] == "win.pdf"
 
 
-def test_scanned_pdf_without_text_is_422(client, monkeypatch):
-    r = client.post("/sources/test_up/pdf", files={"file": ("scan.pdf", make_pdf([[]]), "application/pdf")})
+def test_scanned_pdf_without_text_is_422_and_leaves_no_file(user):
+    from app import knowledge
+    from pathlib import Path
+    r = user.add_pdf(user.project, "scan.pdf", make_pdf([[]]))
     assert r.status_code == 422 and "no extractable text" in r.json()["detail"]
+    failed = [s for s in user.get(f"/projects/{user.project}/sources").json() if s["title"] == "scan.pdf"]
+    assert failed[0]["status"] == "failed" and failed[0]["chunk_count"] == 0
+    folder = Path(knowledge.settings.upload_dir) / f"project_{user.project}" / f"source_{failed[0]['id']}"
+    assert not any(folder.glob("*")) if folder.exists() else True  # the refused file is not kept

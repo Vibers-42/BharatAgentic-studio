@@ -84,12 +84,16 @@ function Invoke-Api([string]$Method, [string]$Url, [string]$Body = $null) {
     New-Result ($script:Http.SendAsync($req).GetAwaiter().GetResult())
 }
 
+# Phase 8: files go into the signed-in account's project; graphs point at them with source_ref.
+$script:Src = @{}
 function Send-File([string]$SourceId, [string]$Path, [string]$FileName) {
     $form = [System.Net.Http.MultipartFormDataContent]::new()
     $file = [System.Net.Http.ByteArrayContent]::new([System.IO.File]::ReadAllBytes((Resolve-Path $Path)))
     $file.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse('application/pdf')
     $form.Add($file, 'file', $FileName)
-    New-Result ($script:Http.PostAsync("$Api/sources/$SourceId/pdf", $form).GetAwaiter().GetResult())
+    $r = New-Result ($script:Http.PostAsync("$Api/projects/$($script:Who.Project)/sources/file", $form).GetAwaiter().GetResult())
+    if ($r.Status -eq 201) { $script:Src[$SourceId] = $r.Json.id }
+    $r
 }
 
 function New-Graph([string[]]$SourceIds, [string]$Model = 'gemini') {
@@ -102,14 +106,15 @@ function New-Graph([string[]]$SourceIds, [string]$Model = 'gemini') {
     )
     $edges = @(@{ from = 'n1'; to = 'n2' }, @{ from = 'n2'; to = 'n3' }, @{ from = 'n3'; to = 'n4' }, @{ from = 'n4'; to = 'n5' })
     foreach ($id in $SourceIds) {
-        $nodes += @{ id = $id; type = 'source_doc'; config = @{ file = "$id.pdf" } }
+        $nodes += @{ id = $id; type = 'source_doc'; config = @{ source_ref = $script:Src[$id] } }
         $edges += @{ from = $id; to = 'n4' }
     }
     @{ nodes = $nodes; edges = $edges }
 }
 
 function New-RunBody([string]$Question, [string]$Model, [string[]]$Sources = @('p4_refund'), [string]$UserName = $User) {
-    $body = @{ question = $Question; model = $Model; user = $UserName; graph = (New-Graph $Sources $Model) }
+    # Phase 8: the user comes from the session; a "user" in the body is ignored (checked below).
+    $body = @{ question = $Question; model = $Model; user = $UserName; project_id = $script:Who.Project; graph = (New-Graph $Sources $Model) }
     $body | ConvertTo-Json -Depth 10 -Compress
 }
 
@@ -149,7 +154,7 @@ function Assert-GeminiNotBlocked($Last) {
     }
 }
 
-function Get-LatestRow { @((Invoke-Api 'GET' "$Api/usage/recent?user=$User&limit=1").Json)[0] }
+function Get-LatestRow { @((Invoke-Api 'GET' "$Api/usage/recent?limit=1").Json)[0] }
 
 # Expected cost from the /models price list, to check the api's arithmetic independently.
 function Get-ExpectedUsd([string]$ModelKey, [int]$InputTokens, [int]$OutputTokens) {
@@ -186,6 +191,14 @@ $QLab = 'How much is refunded if a lab test is cancelled before the sample is co
 # ---------- Preflight ----------
 $script:ApiUp = $false
 try { $script:ApiUp = ((Invoke-Api 'GET' "$Api/health").Json.ok -eq $true) } catch { }
+if ($script:ApiUp) {
+    # Phase 8: a fresh test account (real registration, own session and CSRF token) replaces the p4_<time> user
+    # name; its usage is read back with the session, and $User becomes its display name in the usage tables.
+    . "$PSScriptRoot\_session.ps1"
+    $script:Who = New-TestSession 'p4'
+    $script:Http = $script:Who.Http
+    $User = $script:Who.Name
+}
 if (-not $script:ApiUp) { Write-Host 'The api is not reachable on :8000. Run: docker compose up -d --build' -ForegroundColor Red }
 $script:Models = $null
 try { $script:Models = (Invoke-Api 'GET' "$Api/models").Json } catch { }
@@ -214,18 +227,17 @@ try {
         $local = @($script:Models.models | Where-Object { $_.key -eq 'local' })[0]
         if ($local.ready) { $true } else { "not ready: $($local.why_not_ready)" }
     }
-    Test-Check "users: demo exists and $User can be added" {
-        $add = Invoke-Api 'POST' "$Api/users" "{`"name`":`"$User`"}"
-        $names = @((Invoke-Api 'GET' "$Api/users").Json | ForEach-Object { $_.name })
-        if ($add.Status -eq 201 -and $names -contains 'demo' -and $names -contains $User) { $true } else { "HTTP $($add.Status), users=$($names -join ',')" }
+    Test-Check "users: the open user list is gone; requests are made as the signed-in account ($User)" {
+        $list = Invoke-Api 'GET' "$Api/users"
+        $me = (Invoke-Api 'GET' "$Api/auth/me").Json.user.full_name
+        if ($list.Status -in 404, 405 -and $me -eq $User) { $true } else { "GET /users HTTP $($list.Status), me=$me" }
     }
-    Test-Check 'unknown user and unknown model are refused (400) before anything runs' {
-        $u = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" (New-RunBody 'hi' 'gemini' @() 'nobody_here')
-        $m = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" ((@{ question = 'hi'; model = 'gpt-9'; user = $User; graph = (New-Graph @()) }) | ConvertTo-Json -Depth 10 -Compress)
-        if ($u.Status -eq 400 -and $m.Status -eq 400) { $true } else { "user: HTTP $($u.Status), model: HTTP $($m.Status)" }
+    Test-Check 'unknown model is refused (400) before anything runs' {
+        $m = Invoke-Api 'POST' "$Api/pipeline/run?stream=false" ((@{ question = 'hi'; model = 'gpt-9'; project_id = $script:Who.Project; graph = (New-Graph @()) }) | ConvertTo-Json -Depth 10 -Compress)
+        if ($m.Status -eq 400) { $true } else { "model: HTTP $($m.Status)" }
     }
     Test-Check 'an agent node with an unknown model is a graph error (bad_model)' {
-        $r = Invoke-Api 'POST' "$Api/pipeline/validate" ((New-Graph @() 'gpt-9') | ConvertTo-Json -Depth 10 -Compress)
+        $r = Invoke-Api 'POST' "$Api/pipeline/validate?project_id=$($script:Who.Project)" ((New-Graph @() 'gpt-9') | ConvertTo-Json -Depth 10 -Compress)
         if (@($r.Json.errors | ForEach-Object { $_.code }) -contains 'bad_model') { $true } else { $r.Text }
     }
     Test-Check 'upload the refund PDF (local embeddings, no model API)' {
@@ -314,8 +326,8 @@ try {
 
     Write-Host "`n== Usage API"
     Test-Check 'totals for this user match its rows (requests, tokens, cost)' {
-        $rows = @((Invoke-Api 'GET' "$Api/usage/recent?user=$User&limit=200").Json)
-        $t = (Invoke-Api 'GET' "$Api/usage/totals?user=$User").Json
+        $rows = @((Invoke-Api 'GET' "$Api/usage/recent?limit=200").Json)
+        $t = (Invoke-Api 'GET' "$Api/usage/totals").Json
         $inSum = ($rows | Measure-Object -Property input_tokens -Sum).Sum
         $costSum = ($rows | Where-Object { $null -ne $_.cost_usd } | Measure-Object -Property cost_usd -Sum).Sum
         if ($rows.Count -eq $script:LoggedRuns -and $t.requests -eq $rows.Count -and $t.input_tokens -eq $inSum -and (Test-Near $t.cost_usd ([double]$costSum))) { $true }
@@ -323,8 +335,8 @@ try {
     }
     Test-Check 'by-user, by-model and by-day include this run' {
         $u = @((Invoke-Api 'GET' "$Api/usage/by-user").Json | Where-Object { $_.user -eq $User })[0]
-        $m = @((Invoke-Api 'GET' "$Api/usage/by-model?user=$User").Json | ForEach-Object { $_.model })
-        $d = @((Invoke-Api 'GET' "$Api/usage/by-day?user=$User&days=2").Json)
+        $m = @((Invoke-Api 'GET' "$Api/usage/by-model").Json | ForEach-Object { $_.model })
+        $d = @((Invoke-Api 'GET' "$Api/usage/by-day?days=2").Json)
         if ($u.requests -eq $script:LoggedRuns -and ($m -join ',') -match 'local:' -and ($d | Measure-Object -Property requests -Sum).Sum -eq $script:LoggedRuns) { $true }
         else { "by-user=$($u.requests), models=$($m -join ','), by-day=$(($d | Measure-Object -Property requests -Sum).Sum)" }
     }
@@ -339,7 +351,7 @@ try {
     $cloudFake = @("GEMINI_BASE_URL: http://host.docker.internal:$FakePort", 'GEMINI_API_KEY: fake-key',
                    "GROQ_BASE_URL: http://host.docker.internal:$FakePort", 'GROQ_API_KEY: fake-key')
     if (-not (Restart-Api $cloudFake)) { throw 'api did not become healthy with the fake APIs' }
-    $fallbacksBefore = @(@((Invoke-Api 'GET' "$Api/usage/recent?user=$User&limit=200").Json) | Where-Object { $_.fallback_from }).Count
+    $fallbacksBefore = @(@((Invoke-Api 'GET' "$Api/usage/recent?limit=200").Json) | Where-Object { $_.fallback_from }).Count
     function Get-FakeCount([string]$Name) { $c = (Invoke-Api 'GET' "$FakeUrl/_requests").Json.$Name; if ($c) { [int]$c } else { 0 } }
 
     Test-Check 'Gemini HTTP 500: retried exactly once, then the local model answered' {
@@ -399,7 +411,7 @@ try {
         else { "model=$($run.Last.model), fallback=$($run.Last.fallback.code), fake got $sent requests" }
     }
     Test-Check 'fallback answers are logged with fallback_from' {
-        $rows = @((Invoke-Api 'GET' "$Api/usage/recent?user=$User&limit=200").Json)
+        $rows = @((Invoke-Api 'GET' "$Api/usage/recent?limit=200").Json)
         $fallbacks = @($rows | Where-Object { $_.fallback_from }).Count
         if ($fallbacks -eq $fallbacksBefore + 4) { $true } else { "rows with fallback_from: $fallbacks (expected $($fallbacksBefore + 4))" }
     }
@@ -422,12 +434,12 @@ try {
         if ($run.Last.code -eq 'all_providers_failed' -and $tries -eq 'local:model_not_found,local_small:model_not_found') { $true } else { "code=$($run.Last.code), attempts=$tries" }
     }
     Test-Check 'total failures are logged as errors with zero tokens' {
-        $rows = @((Invoke-Api 'GET' "$Api/usage/recent?user=$User&limit=2").Json)
+        $rows = @((Invoke-Api 'GET' "$Api/usage/recent?limit=2").Json)
         $bad = @($rows | Where-Object { $_.status -ne 'error' -or $_.error_code -ne 'all_providers_failed' -or $_.output_tokens -ne 0 })
         if ($rows.Count -eq 2 -and $bad.Count -eq 0) { $true } else { "rows=$($rows | ConvertTo-Json -Compress)" }
     }
     Test-Check 'usage totals count errors and fallbacks for this user' {
-        $t = (Invoke-Api 'GET' "$Api/usage/totals?user=$User").Json
+        $t = (Invoke-Api 'GET' "$Api/usage/totals").Json
         if ($t.requests -eq $script:LoggedRuns -and $t.errors -eq 2 -and $t.fallbacks -ge 4 -and $t.estimated_requests -eq 1) { $true }
         else { "runs=$($script:LoggedRuns), totals=$($t | ConvertTo-Json -Compress)" }
     }

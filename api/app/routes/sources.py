@@ -1,128 +1,105 @@
-"""Source endpoints: add content to a source node (a PDF upload, a docs URL or a GitHub repo), see what a
-source holds (or list every source of a graph), or clear it. ?graph_id=N stores the chunks for that saved graph only (the node must exist
-there with the right type); without it they go to the "inline" scope used by graphs sent with a question.
-Uploaded files are saved in the uploads Docker volume, one folder per scope and source id."""
+"""Project knowledge: list, add (file upload, docs link, GitHub repo), view, re-index, replace, download and
+delete sources. Viewers and above can read; contributors and above can add; the person who added a source and
+the workspace owners/admins can change or delete it. Files are only downloadable through this api, after the
+same check (they are not in any public folder)."""
 
-import re
-from pathlib import Path
-
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from .. import knowledge
+from ..access import require_project, require_source
+from ..auth import User, current_user
 from ..config import settings
-from ..rag import store
-from ..rag.embeddings import EmbeddingError
-from ..rag.fetch import BlockedURL
-from ..rag.ingest import IngestError, ingest_pdf, ingest_repo, ingest_url
-from .graphs import load_graph
+from ..rag import extract
 
-router = APIRouter(prefix="/sources")
-
-SOURCE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]")
+router = APIRouter()
 
 
 class LinkRequest(BaseModel):
-    url: str | None = None  # optional with ?graph_id: then the node's config url is used
+    url: str
 
 
-def _check_source_id(source_id: str) -> None:
-    if not SOURCE_ID.match(source_id):
-        raise HTTPException(400, "Source id may only use letters, digits, '-' and '_' (max 64).")
-
-
-def _scope(source_id: str, graph_id: int | None, node_type: str | None = None) -> tuple[str, dict]:
-    """The scope to store in, and the node's config when a saved graph is named."""
-    _check_source_id(source_id)
-    if graph_id is None:
-        return store.INLINE, {}
-    node = load_graph(graph_id).node(source_id)
-    if node is None:
-        raise HTTPException(404, f"Saved graph {graph_id} has no node '{source_id}'.")
-    if node_type and node.type != node_type:
-        raise HTTPException(400, f"Node '{source_id}' in graph {graph_id} is a {node.type}, not a {node_type}.")
-    return store.graph_scope(graph_id), node.config
-
-
-def _safe_file_name(name: str | None) -> str:
-    # Keep only the base name and plain characters, so a name like "../../x.pdf" cannot escape the folder.
-    # Backslashes count as folder separators too, since Windows paths may arrive on this Linux server.
-    base = SAFE_NAME.sub("_", Path((name or "upload.pdf").replace("\\", "/")).name).strip(" .") or "upload.pdf"
-    if not base.lower().endswith(".pdf"):
-        raise HTTPException(400, "Only PDF files can be uploaded; add web pages with POST /sources/{id}/url.")
-    return base
-
-
-def _run(ingest, *args):
-    try:
-        return ingest(*args)
-    except BlockedURL as exc:
-        raise HTTPException(400, str(exc))
-    except IngestError as exc:
-        raise HTTPException(422, str(exc))
-    except EmbeddingError as exc:
-        raise HTTPException(503, str(exc))
-
-
-# Plain defs (not async): FastAPI runs them in a worker thread, so slow downloads and embedding never
-# block other requests.
-@router.post("/{source_id}/pdf", status_code=201)
-def upload_pdf(source_id: str, file: UploadFile = File(...), graph_id: int | None = None):
-    scope, _ = _scope(source_id, graph_id, "source_doc")
-    file_name = _safe_file_name(file.filename)
+def _read_upload(file: UploadFile) -> tuple[str, bytes]:
+    name = knowledge.safe_file_name(file.filename)
     data = file.file.read(settings.max_upload_mb * 1024 * 1024 + 1)
     if len(data) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(413, f"The file is larger than {settings.max_upload_mb} MB.")
-    if not data.startswith(b"%PDF-"):
-        raise HTTPException(400, f"'{file_name}' is not a PDF file.")
-
-    folder = Path(settings.upload_dir) / scope.replace(":", "_") / source_id
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / file_name
-    path.write_bytes(data)
     try:
-        return _run(ingest_pdf, source_id, str(path), file_name, scope)
-    except HTTPException:
-        raise
-    except Exception as exc:  # pypdf raises many types for broken files
-        raise HTTPException(422, f"Could not read '{file_name}': {exc}")
+        extract.kind_for(name, data)
+    except extract.ExtractError as exc:
+        raise HTTPException(400, str(exc))
+    return name, data
 
 
-@router.post("/{source_id}/url", status_code=201)
-def add_url(source_id: str, req: LinkRequest, graph_id: int | None = None):
-    scope, config = _scope(source_id, graph_id, "source_doc")
-    url = req.url or config.get("url")
-    if not url:
-        raise HTTPException(400, "Send the page as {\"url\": \"https://...\"}.")
-    return _run(ingest_url, source_id, url, scope)
+@router.get("/projects/{project_id}/sources")
+def list_sources(project_id: int, user: User = Depends(current_user)):
+    require_project(user, project_id)
+    return knowledge.list_sources(project_id)
 
 
-@router.post("/{source_id}/repo", status_code=201)
-def add_repo(source_id: str, req: LinkRequest, graph_id: int | None = None):
-    scope, config = _scope(source_id, graph_id, "source_repo")
-    url = req.url or config.get("url")
-    if not url:
-        raise HTTPException(400, "Send the repository as {\"url\": \"https://github.com/owner/repo\"}.")
-    return _run(ingest_repo, source_id, url, scope)
+@router.post("/projects/{project_id}/sources/file", status_code=201)
+def add_file(project_id: int, file: UploadFile = File(...), user: User = Depends(current_user)):
+    require_project(user, project_id, "contribute")
+    name, data = _read_upload(file)
+    sid = knowledge.create_source(project_id, user.id, extract.kind_for(name, data), name, original_name=name)
+    return knowledge.ingest_file(sid, project_id, name, data)
 
 
-@router.get("")
-def list_sources(graph_id: int | None = None):
-    """What every source holds: in a saved graph's documents with ?graph_id=N, else in the inline scope."""
-    scope = store.INLINE
-    if graph_id is not None:
-        load_graph(graph_id)  # 404 if the graph does not exist
-        scope = store.graph_scope(graph_id)
-    return {"scope": scope, "sources": store.list_sources(scope)}
+@router.post("/projects/{project_id}/sources/url", status_code=201)
+def add_url(project_id: int, req: LinkRequest, user: User = Depends(current_user)):
+    require_project(user, project_id, "contribute")
+    url = req.url.strip()
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "Enter a web address starting with http:// or https://.")
+    sid = knowledge.create_source(project_id, user.id, "url", url, url=url)
+    return knowledge.ingest_link(sid, project_id, "url", url)
 
 
-@router.get("/{source_id}")
-def get_source(source_id: str, graph_id: int | None = None):
-    scope, _ = _scope(source_id, graph_id)
-    return store.source_info(source_id, scope)
+@router.post("/projects/{project_id}/sources/repo", status_code=201)
+def add_repo(project_id: int, req: LinkRequest, user: User = Depends(current_user)):
+    require_project(user, project_id, "contribute")
+    url = req.url.strip()
+    if not url.lower().startswith("https://github.com/"):
+        raise HTTPException(400, "Enter a public GitHub repository, like https://github.com/owner/repo.")
+    sid = knowledge.create_source(project_id, user.id, "repo", url, url=url)
+    return knowledge.ingest_link(sid, project_id, "repo", url)
 
 
-@router.delete("/{source_id}")
-def clear_source(source_id: str, graph_id: int | None = None):
-    scope, _ = _scope(source_id, graph_id)
-    return {"source_id": source_id, "scope": scope, "deleted_chunks": store.clear_source(source_id, scope)}
+@router.get("/sources/{source_id}")
+def get_source(source_id: int, user: User = Depends(current_user)):
+    require_source(user, source_id)
+    return knowledge.get_source(source_id)
+
+
+@router.post("/sources/{source_id}/reindex")
+def reindex(source_id: int, user: User = Depends(current_user)):
+    require_source(user, source_id, "manage")
+    return knowledge.reindex(knowledge.get_source(source_id))
+
+
+@router.post("/sources/{source_id}/file")
+def replace_file(source_id: int, file: UploadFile = File(...), user: User = Depends(current_user)):
+    src, _ = require_source(user, source_id, "manage")
+    current = knowledge.get_source(source_id)
+    if current["kind"] in ("url", "repo"):
+        raise HTTPException(400, "This source is a link; use re-index instead.")
+    name, data = _read_upload(file)
+    return knowledge.ingest_file(source_id, src["project_id"], name, data)
+
+
+@router.delete("/sources/{source_id}")
+def delete_source(source_id: int, user: User = Depends(current_user)):
+    require_source(user, source_id, "manage")
+    used = knowledge.get_source(source_id)["agents"]
+    knowledge.delete_source(source_id)
+    return {"deleted": source_id, "unlinked_agents": [a["name"] for a in used]}
+
+
+@router.get("/sources/{source_id}/file")
+def download(source_id: int, user: User = Depends(current_user)):
+    require_source(user, source_id)
+    src = knowledge.get_source(source_id)
+    path = knowledge.file_path(src)
+    return FileResponse(path, filename=src.get("original_name") or path.name,
+                        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"})

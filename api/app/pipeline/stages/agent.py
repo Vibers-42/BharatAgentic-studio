@@ -5,6 +5,7 @@ events while it is written. Each cited sentence is checked against what it cites
 dropped if unsupported. Every question's model calls (tool plan + answer) are added up into one usage row
 with tokens and estimated cost. If nothing supported is left, the agent says it does not know."""
 
+import dataclasses
 import time
 from collections.abc import Iterator
 
@@ -25,7 +26,8 @@ def _log(ctx: RunContext, **row) -> None:
     if ctx.user_id is None:
         return
     try:
-        usage.log(user_id=ctx.user_id, sources=[n.id for n in ctx.sources + ctx.tools], language=ctx.language, **row)
+        usage.log(user_id=ctx.user_id, sources=[n.id for n in ctx.sources + ctx.tools], language=ctx.language,
+                  **ctx.owner, **row)
     except Exception as exc:
         ctx.warnings.append(f"Usage was not logged: {exc}")
 
@@ -98,7 +100,7 @@ def _use_tools(ctx: RunContext, node: Node, relevant: list[Chunk]) -> Iterator[d
         ctx.warnings.append(f"Tool {unavailable['node_id']} is unavailable: {unavailable['error']}")
     if not any(t.get("tool") for t in offered):
         return []
-    prompt_text = planner.plan_prompt(ctx.question, offered, [c.content for c in relevant])
+    prompt_text = planner.plan_prompt(_with_history(ctx), offered, [c.content for c in relevant])
     # Models sometimes reply without a readable plan (a reasoning model may return no text at all); ask once more.
     for attempt in range(planner.PLAN_ATTEMPTS):
         plan_text = yield from _generate(ctx, node, planner.PLANNER_SYSTEM, prompt_text, "tool_plan", stream_text=False)
@@ -121,6 +123,55 @@ def _use_tools(ctx: RunContext, node: Node, relevant: list[Chunk]) -> Iterator[d
             as_sources.append(Chunk(-(len(as_sources) + 1), call.node_id, f"{label} (tool)", 0, None,
                                     f"Tool {label} was called with {call.args} and returned: {result['output']}", 1.0))
     return as_sources
+
+
+def _searchable(ctx: RunContext) -> dict[str, str]:
+    """Stored source id -> node id, for the connected sources this run may search. With a source map (every
+    Phase 8 run) only the mapped, authorized sources; without one (unit tests) the node ids themselves."""
+    if ctx.source_map is None:
+        return {n.id: n.id for n in ctx.sources}
+    return {ctx.source_map[n.id]: n.id for n in ctx.sources if n.id in ctx.source_map}
+
+
+def _to_nodes(chunks: list[Chunk], searchable: dict[str, str]) -> list[Chunk]:
+    """Report chunks under their node id, so citations and canvas highlights name the node."""
+    return [dataclasses.replace(c, source_id=searchable.get(c.source_id, c.source_id)) for c in chunks]
+
+
+def _search_text(ctx: RunContext) -> str:
+    """A short follow-up ("which file?") is searched together with the previous question of the conversation."""
+    earlier = [text for role, text in ctx.history if role == "user"]
+    return f"{earlier[-1]} {ctx.question}" if earlier and len(ctx.question) < 120 else ctx.question
+
+
+def _retrieve(ctx: RunContext, source_ids: list[str]) -> tuple[list[Chunk], list[Chunk]]:
+    """The question is always searched on its own. In a conversation a short question is also searched together
+    with the previous one ("what happens if it is down?"); the two result lists are merged, best match first.
+    Searching only the joined text let an earlier topic crowd out a new one ("what is the repo for?" after a
+    delivery question returned only the PDF)."""
+    relevant, candidates = retrieve(ctx.question, source_ids, ctx.scope)
+    text = _search_text(ctx)
+    if text == ctx.question:
+        return relevant, candidates
+    more_relevant, more_candidates = retrieve(text, source_ids, ctx.scope)
+
+    def merge(a: list[Chunk], b: list[Chunk]) -> list[Chunk]:
+        best: dict[int, Chunk] = {}
+        for c in a + b:
+            if c.id not in best or c.similarity > best[c.id].similarity:
+                best[c.id] = c
+        return sorted(best.values(), key=lambda c: c.similarity, reverse=True)[:settings.top_k]
+
+    return merge(relevant, more_relevant), merge(candidates, more_candidates)
+
+
+def _with_history(ctx: RunContext) -> str:
+    """The question, preceded by a bounded excerpt of the conversation so far (never more than a few messages,
+    each cut to 600 characters). Retrieval and citations still come only from the current, authorized sources."""
+    if not ctx.history:
+        return ctx.question
+    lines = [f"{'User' if role == 'user' else 'Assistant'}: {text[:600]}" for role, text in ctx.history]
+    return "Earlier in this conversation:\n" + "\n".join(lines) + f"\n\nCurrent question: {ctx.question}"
 
 
 def run(ctx: RunContext, node: Node, graph: Graph) -> Iterator[dict]:
@@ -147,10 +198,12 @@ def run(ctx: RunContext, node: Node, graph: Graph) -> Iterator[dict]:
     # Search only the connected sources; an unconnected source is never passed to retrieve().
     relevant: list[Chunk] = []
     if ctx.sources and ctx.route != "direct":
-        relevant, candidates = retrieve(ctx.question, [n.id for n in ctx.sources], ctx.scope)
+        searchable = _searchable(ctx)
+        relevant, candidates = _retrieve(ctx, list(searchable))
+        relevant, candidates = _to_nodes(relevant, searchable), _to_nodes(candidates, searchable)
         detail["retrieval"] = {
             "scope": ctx.scope,
-            "searched": [n.id for n in ctx.sources],
+            "searched": list(searchable.values()),
             "min_similarity": settings.min_similarity,
             "candidates": [{"source_id": c.source_id, "file": c.file_name, "chunk": c.chunk_index,
                             "similarity": round(c.similarity, 3)} for c in candidates],
@@ -165,7 +218,7 @@ def run(ctx: RunContext, node: Node, graph: Graph) -> Iterator[dict]:
 
     # Direct answer: nothing to retrieve or compute; no citations, marked as not from your sources.
     if ctx.route == "direct" or (not ctx.sources and not tool_sources):
-        yield from _generate(ctx, node, prompt.direct_system(ctx.language), ctx.question, "answer", stream_text=True)
+        yield from _generate(ctx, node, prompt.direct_system(ctx.language), _with_history(ctx), "answer", stream_text=True)
         ctx.answer = ctx.generations[-1].text
         ctx.grounded, ctx.supported, ctx.citations = False, False, []
         return finish(mode="direct", model_called=True)
@@ -176,7 +229,7 @@ def run(ctx: RunContext, node: Node, graph: Graph) -> Iterator[dict]:
         return finish(mode="rag", model_called=bool(ctx.generations),
                       reason="No chunk from the connected sources is relevant enough to answer.")
 
-    yield from _generate(ctx, node, prompt.rag_system(ctx.language), prompt.rag_prompt(ctx.question, evidence),
+    yield from _generate(ctx, node, prompt.rag_system(ctx.language), prompt.rag_prompt(_with_history(ctx), evidence),
                          "answer", stream_text=True)
     ctx.answer = ctx.generations[-1].text
     checked = citations.check(ctx.answer, evidence)

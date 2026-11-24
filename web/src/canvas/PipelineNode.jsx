@@ -20,11 +20,11 @@ const KIND_ICON = {
 
 function SourceLine({ data }) {
   const info = data.source;
-  if (data.graphUnsaved) return <span className="node-line muted">Save the agent to add content</span>;
-  if (!info) return <span className="node-line warn"><Icon name="alert" size={13} /> Empty — add content</span>;
+  if (!info) return <span className="node-line warn"><Icon name="alert" size={13} /> Choose project knowledge</span>;
+  if (info.status !== "ready") return <span className="node-line warn"><Icon name="alert" size={13} /> {info.file}: {info.status}</span>;
   return (
     <span className="node-line ok" title={info.file_names?.join("\n")}>
-      <Icon name="check" size={13} /> {info.chunks} chunks · {info.files > 1 ? `${info.files} files` : info.file}
+      <Icon name="check" size={13} /> {info.chunks} chunks · {info.file}
     </span>
   );
 }

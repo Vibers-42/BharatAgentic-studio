@@ -123,8 +123,13 @@ Write-Host "`n== API"
 Test-Check 'GET :8000/health returns ok' {
     (Get-Json 'http://127.0.0.1:8000/health').ok -eq $true
 } -Needs api
+# Since Phase 8 /status needs a session: sign in as a fresh test account (see _session.ps1).
 $status = $null
-try { $status = Get-Json 'http://127.0.0.1:8000/status' } catch { }
+try {
+    . "$PSScriptRoot\_session.ps1"
+    $script:Who = New-TestSession 'p1'
+    $status = (Send-Json $script:Who.Http 'GET' 'http://127.0.0.1:8000/status').Json
+} catch { }
 foreach ($field in @('db', 'ollama', 'mcp_runner')) {
     Test-Check "GET :8000/status shows $field up" {
         if ($null -eq $status) { return 'GET /status failed' }
@@ -137,8 +142,10 @@ Write-Host "`n== Web"
 Test-Check 'web serves the React page on :3000' {
     (Get-Text 'http://127.0.0.1:3000/') -match 'id="root"'
 } -Needs web
-Test-Check 'web proxies /api/status to the api' {
-    (Get-Json 'http://127.0.0.1:3000/api/status').api -eq $true
+Test-Check 'web proxies /api to the api (/api/health public, /api/status only with a session)' {
+    $anon = try { (Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:3000/api/status' -TimeoutSec 10).StatusCode } catch { [int]$_.Exception.Response.StatusCode }
+    $signed = (Send-Json $script:Who.Http 'GET' 'http://127.0.0.1:3000/api/status').Json.api
+    (Get-Json 'http://127.0.0.1:3000/api/health').ok -eq $true -and $anon -eq 401 -and $signed -eq $true
 } -Needs web, api
 
 # ---------- Database ----------
