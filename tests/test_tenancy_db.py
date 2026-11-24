@@ -455,6 +455,55 @@ def test_final_answer_is_withheld_if_access_was_removed_during_the_run(world, mo
         world["a"].put(f"/projects/{world['proj']}/members/{world['c'].id}", json={"role": "viewer"})
 
 
+def _rewriting_model(monkeypatch, module, answer, calls):
+    """A model that answers the rewrite prompt with a query and other prompts with `answer`; records which."""
+    from app.rag import conversation
+
+    def stream(system, prompt, **kw):
+        is_rewrite = system == conversation.REWRITE_SYSTEM
+        calls.append(f"{module.__name__.rsplit('.', 1)[-1]}:{'rewrite' if is_rewrite else 'answer'}")
+        yield {"text": "Detailed explanation of the refund policy" if is_rewrite else answer}
+        yield {"usage": {"input_tokens": 10, "output_tokens": 5}}
+    monkeypatch.setattr(module, "stream", stream)
+
+
+def test_follow_up_rewrite_in_a_local_only_project_never_reaches_the_cloud(world, monkeypatch):
+    from app.models import gemini, groq, ollama
+    calls = []
+    for cloud in (gemini, groq):
+        monkeypatch.setattr(cloud, "stream", lambda *a, **k: calls.append("CLOUD") or iter(()))
+    _rewriting_model(monkeypatch, ollama, "80 percent of the test amount is refunded [1].", calls)
+    a = world["a"]
+    p = project_in(a, world["org"], "Private follow-ups", local_only=True)
+    a.add_pdf(p, "secret.pdf", make_pdf(REFUND_POLICY))
+    conv = a.post("/conversations", json={"project_id": p}).json()["id"]
+    assert a.ask(question="How much is refunded for a lab test?", conversation_id=conv, model="local")[0].status_code == 200
+    r, events = a.ask(question="Explain it in detail.", conversation_id=conv, model="local")
+    assert r.status_code == 200 and "CLOUD" not in calls and "ollama:rewrite" in calls
+    steps = [s["model"] for s in next(e for e in events if e.get("stage") == "agent" and e.get("status") == "done")
+             ["detail"]["generation"]["steps"]]
+    assert steps and all(m.startswith("local") for m in steps)
+
+
+def test_a_deleted_source_is_never_reused_through_conversation_history(world, monkeypatch):
+    from app.models import gemini
+    calls = []
+    _rewriting_model(monkeypatch, gemini, "The gate closes at 9:30 PM [1][2].", calls)
+    a = world["a"]
+    p = project_in(a, world["org"], "History and deletion")
+    gone = a.add_pdf(p, "temporary.pdf", make_pdf(HOSTEL_RULES)).json()["id"]
+    a.add_pdf(p, "kept.pdf", make_pdf(REFUND_POLICY))
+    conv = a.post("/conversations", json={"project_id": p}).json()["id"]
+    r, events = a.ask(question="What time does the hostel gate close?", conversation_id=conv, model="gemini")
+    assert "temporary.pdf" in {c["file"] for c in events[-1]["citations"]}   # the first answer cited it
+    assert a.delete(f"/sources/{gone}").status_code == 200
+    r, events = a.ask(question="Explain it in detail.", conversation_id=conv, model="gemini")
+    retrieval = next(e for e in events if e.get("stage") == "agent" and e.get("status") == "done")["detail"]["retrieval"]
+    assert retrieval["follow_up"] is True and not any("temporary.pdf" in x for x in retrieval["reused"])
+    assert all(c["file"] != "temporary.pdf" for c in retrieval["candidates"])
+    assert all(c["file"] != "temporary.pdf" for c in events[-1].get("citations") or [])
+
+
 def test_project_chat_uses_every_ready_project_source(world):
     r, events = world["c"].ask(question="refund policy", project_id=world["proj"])
     agent = next(e for e in events if e.get("stage") == "agent" and e.get("status") == "done")

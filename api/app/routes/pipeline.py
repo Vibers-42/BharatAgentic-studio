@@ -103,11 +103,16 @@ def _source_map(graph: Graph, project_id: int) -> dict[str, str]:
     return {node: knowledge.chunk_source_id(sid) for node, sid in refs.items()}
 
 
-def _history(conversation_id: int) -> list[tuple[str, str]]:
+def _history(conversation_id: int) -> tuple[list[tuple[str, str]], list[dict]]:
+    """The last few messages of this conversation (only this conversation, which belongs to the caller), and
+    what its latest answer cited. Failed answers are left out. The citations are only pointers: the agent
+    re-reads those chunks and keeps them only if this run may still search their source."""
     with get_conn() as conn:
-        rows = conn.execute("SELECT role, content FROM messages WHERE conversation_id = %s AND status = 'ok' "
+        rows = conn.execute("SELECT role, content, citations FROM messages WHERE conversation_id = %s AND status = 'ok' "
                             "ORDER BY id DESC LIMIT %s", (conversation_id, settings.history_messages)).fetchall()
-    return [(r[0], r[1]) for r in reversed(rows)]
+    rows = list(reversed(rows))
+    cited = next((r[2] or [] for r in reversed(rows) if r[0] == "assistant"), [])
+    return [(r[0], r[1]) for r in rows], cited
 
 
 def _save_message(conversation_id: int, role: str, content: str, request_id: str | None, status: str = "ok",
@@ -172,7 +177,7 @@ def run(req: RunRequest, stream: bool = True, user: User = Depends(current_user)
         why = "this project is local-only" if access.local_only else "local-only mode is on"
         raise HTTPException(400, f"Cloud models cannot be used because {why}. Choose 'local' or 'local_small'.")
 
-    history = _history(conversation["id"]) if conversation else []
+    history, previous_citations = _history(conversation["id"]) if conversation else ([], [])
     if conversation:
         try:
             _save_message(conversation["id"], "user", req.question, req.request_id)
@@ -183,7 +188,8 @@ def run(req: RunRequest, stream: bool = True, user: User = Depends(current_user)
     owner = {"org_id": access.org_id, "project_id": project_id, "graph_id": req.graph_id,
              "conversation_id": conversation["id"] if conversation else None}
     events = run_pipeline(graph, req.question, req.language, req.model, user.id, knowledge.scope_of(project_id),
-                          local_only, source_map=source_map, history=history, owner=owner)
+                          local_only, source_map=source_map, history=history, owner=owner,
+                          previous_citations=previous_citations)
 
     def guarded():
         """Re-check access while streaming; store the final answer (or the error) in the conversation."""

@@ -152,3 +152,33 @@ Groq, Qwen 3 14B and Qwen 2.5 3B answered for real. Observed variance: asked "My
 I need to spend to get free delivery?", Groq answered Rs. 49 (correct, cited, calculator used) in 3 of 4 probes;
 once it reasoned "above Rs. 499" to Rs. 500 and Rs. 50, the claim check removed that unsupported sentence and the
 answer became "I don't know" (one earlier verify_phase8 run failed on this; the latest passed).
+
+## Conversational retrieval fix (follow-up questions)
+
+Reported in manual testing: after "What is this project about?" (cited answer), the follow-up "tell clerly about
+this allobrate the explination" was answered "I don't know" without any model call.
+
+Root cause, measured with the real bge-m3 index (threshold 0.50): the follow-up was searched as typed (best chunk
+0.442) and glued to the previous question (0.411, worse); nothing cleared the threshold, so the agent abstained
+before asking the model. Conversation history reached only the answer prompt, never the search. Broad questions
+also relied on whatever single chunk cleared the threshold ("What is this project about?": one chunk at 0.501;
+"What are its main features?": none, best 0.425). Two smaller defects on the same path: "Explain the same thing
+in Telugu" was answered in English (the language came only from the question's script), and the answer prompt
+always asked for one or two sentences.
+
+Fix (`api/app/rag/conversation.py`, `api/app/pipeline/stages/agent.py`, `retrieve.py`, `store.py`, `prompt.py`,
+`input.py`, `routes/pipeline.py`):
+- A question that looks like a follow-up (refers back with it/this/that/its..., asks to explain, simplify, give an
+  example, summarise, translate or continue, tolerates common misspellings, or is very short) is rewritten by the
+  same model into one standalone search query, using the last few turns (bounded). Both the rewrite and the
+  question are searched and merged. A standalone question is searched as it is: no extra model call, no earlier
+  topic mixed in. The rewrite counts as its own step in tokens and cost, obeys local-only, and never switches
+  models: on a rate limit or quota it stops and the search uses the previous question plus this one.
+- Requests to transform the previous answer also reuse the chunks it cited, re-read from the database through
+  the current source map: a deleted, unauthorized or no longer connected source is never reused.
+- Broad questions look at 10 candidates and, once one clears the threshold, keep up to 8 chunks within 0.08 of
+  it. If nothing clears the threshold the answer is still "I don't know".
+- Detailed answers (detail, summary, points, example) may use up to 8 cited sentences (4 in Telugu and Hindi,
+  whose sentences cost many more tokens); every sentence is still citation- and claim-checked. Earlier answers
+  are context for what is asked, never sources.
+- "In Telugu" / "in Hindi" in the question sets the answer language (the chat's language selector still wins).

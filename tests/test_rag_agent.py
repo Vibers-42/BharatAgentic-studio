@@ -24,7 +24,7 @@ def spy_retrieve(monkeypatch):
     """Records which source ids were searched and returns REFUND_CHUNK for any search."""
     calls = []
 
-    def fake(question, source_ids, scope="inline"):
+    def fake(question, source_ids, scope="inline", broad=False):
         calls.append(list(source_ids))
         return ([REFUND_CHUNK], [REFUND_CHUNK]) if source_ids else ([], [])
 
@@ -84,7 +84,7 @@ def test_unconnected_source_never_searched(monkeypatch, spy_retrieve, full_graph
 
 
 def test_nothing_relevant_means_dont_know_without_model_call(monkeypatch, full_graph):
-    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([], [REFUND_CHUNK]))
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline", broad=False: ([], [REFUND_CHUNK]))
     called = []
     monkeypatch.setattr(gemini, "stream", lambda s, p: called.append(1) or iter(()))
     events = run(only_s1(full_graph), "What time does the hostel gate close?")
@@ -170,7 +170,7 @@ def test_every_answer_carries_tokens_and_cost(default_graph):
 
 
 def test_no_model_call_means_no_cost(monkeypatch, full_graph):
-    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([], []))
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline", broad=False: ([], []))
     result = run(only_s1(full_graph), "What time does the hostel gate close?")[-1]
     assert result["model"] is None and result["cost"] is None and result["usage"] is None
 
@@ -189,28 +189,166 @@ def test_answer_in_the_right_language_is_not_flagged(monkeypatch, spy_retrieve, 
     assert result["language_match"] is True and result["warnings"] == []
 
 
-def test_new_topic_in_a_conversation_is_searched_on_its_own(monkeypatch):
-    """Phase 8: a short question in a conversation is searched alone and joined with the previous question;
-    the best chunks of both searches win, so an earlier topic cannot crowd out a new one."""
-    from app.pipeline.context import RunContext
+HANDOFF = Chunk(7, "s1", "handoff.pdf", 0, 1, "BharatAgent Studio is a local, ChatGPT-style assistant where you draw "
+                "an AI agent pipeline and connect your own documents.", 0.72)
+FIRST_ANSWER = ("This project is about building BharatAgent Studio for a hackathon, a local ChatGPT-style app where the "
+                "user draws an AI agent pipeline on a canvas [1].")
+REWRITTEN = "Detailed explanation of the BharatAgent Studio project"
 
-    pdf = Chunk(1, "s1", "ecommerce.pdf", 0, 1, "Delivery is free above Rs. 499.", 0.62)
-    readme = Chunk(2, "s2", "README.md", 0, None, "This repository is meant for practising forks.", 0.71)
+
+def _searches(monkeypatch, hits_for):
+    """A retrieve() that records each search query and answers from hits_for(query)."""
     searched = []
 
-    def fake(question, source_ids, scope="inline"):
+    def fake(question, source_ids, scope="inline", broad=False):
         searched.append(question)
-        hits = [readme] if question.startswith("What is the Spoon-Knife") else [pdf]
+        hits = hits_for(question)
         return hits, hits
-
     monkeypatch.setattr(agent, "retrieve", fake)
-    ctx = RunContext(question="What is the Spoon-Knife repository meant for?")
-    ctx.history = [("user", "Above what order value is delivery free?"), ("assistant", "Rs. 499 [1].")]
-    relevant, candidates = agent._retrieve(ctx, ["s1", "s2"])
-    assert searched[0] == ctx.question and len(searched) == 2
-    assert [c.file_name for c in relevant] == ["README.md", "ecommerce.pdf"]
+    return searched
 
-    ctx.history = []
-    searched.clear()
-    agent._retrieve(ctx, ["s1", "s2"])
-    assert searched == [ctx.question]
+
+def _models(monkeypatch, rewrite_text=REWRITTEN, answer="BharatAgent Studio is a local assistant where you draw an AI agent pipeline [1]."):
+    """Gemini that writes the rewrite for the rewrite prompt and the answer otherwise; records each system prompt."""
+    from app.rag import conversation
+    calls = []
+
+    def stream(system, prompt, **kw):
+        calls.append("rewrite" if system == conversation.REWRITE_SYSTEM else "answer")
+        yield {"text": rewrite_text if system == conversation.REWRITE_SYSTEM else answer}
+        yield {"usage": {"input_tokens": 40, "output_tokens": 12}, "finish_reason": "STOP"}
+    monkeypatch.setattr(gemini, "stream", stream)
+    return calls
+
+
+def test_reported_follow_up_is_rewritten_and_answered_not_declined(monkeypatch, full_graph):
+    """The reported defect: after "What is this project about?", the follow-up "tell clerly about this allobrate
+    the explination" was searched as typed (or glued to the previous question), matched nothing well enough and
+    was answered "I don't know" without asking the model. Now it is rewritten into a standalone query first."""
+    searched = _searches(monkeypatch, lambda q: [HANDOFF] if "BharatAgent Studio" in q else [])
+    calls = _models(monkeypatch)
+    history = [("user", "What is this project about?"), ("assistant", FIRST_ANSWER)]
+    events = list(run_pipeline(Graph.model_validate(only_s1(full_graph)), "tell clerly about this allobrate the explination",
+                               history=history))
+    result = events[-1]
+    agent_done = next(e for e in events if e.get("stage") == "agent" and e.get("status") == "done")["detail"]
+    assert searched[0] == REWRITTEN and "tell clerly about this allobrate the explination" in searched
+    assert agent_done["retrieval"]["rewrite"] == REWRITTEN and agent_done["retrieval"]["follow_up"] is True
+    assert calls == ["rewrite", "answer"]
+    assert result["supported"] is True and result["citations"] and "BharatAgent Studio" in result["answer"]
+    steps = [s["step"] for s in agent_done["generation"]["steps"]]
+    assert steps == ["query_rewrite", "answer"] and result["usage"]["input_tokens"] == 80  # both calls counted
+
+
+def test_standalone_question_costs_no_extra_model_call(monkeypatch, full_graph):
+    """A new, self-contained question in a conversation is searched as it is: no rewrite call, no earlier topic."""
+    searched = _searches(monkeypatch, lambda q: [HANDOFF])
+    calls = _models(monkeypatch)
+    history = [("user", "Above what order value is delivery free?"), ("assistant", "Rs. 499 [1].")]
+    run_pipeline_events = list(run_pipeline(Graph.model_validate(only_s1(full_graph)),
+                                            "What is the Spoon-Knife repository meant for?", history=history))
+    assert searched == ["What is the Spoon-Knife repository meant for?"] and calls == ["answer"]
+    assert run_pipeline_events[-1]["type"] == "result"
+
+
+def test_unusable_rewrite_falls_back_to_the_previous_question(monkeypatch, full_graph):
+    searched = _searches(monkeypatch, lambda q: [HANDOFF] if "project" in q else [])
+    _models(monkeypatch, rewrite_text="Sorry, I cannot help with that.")
+    history = [("user", "What is this project about?"), ("assistant", FIRST_ANSWER)]
+    events = list(run_pipeline(Graph.model_validate(only_s1(full_graph)), "Explain it in detail.", history=history))
+    assert searched[0] == "What is this project about? Explain it in detail." and events[-1]["supported"] is True
+
+
+def test_a_real_abstention_still_says_i_do_not_know(monkeypatch, full_graph):
+    """Rewriting must not turn an unanswerable follow-up into an answer: nothing relevant, nothing said."""
+    _searches(monkeypatch, lambda q: [])
+    calls = _models(monkeypatch, rewrite_text="Monthly parking fee at the BharatAgent office")
+    history = [("user", "What is this project about?"), ("assistant", FIRST_ANSWER)]
+    result = list(run_pipeline(Graph.model_validate(only_s1(full_graph)), "And what is its parking fee?",
+                               history=history))[-1]
+    assert result["supported"] is False and result["answer"] in DONT_KNOW.values() and calls == ["rewrite"]
+
+
+def test_transforming_an_answer_reuses_only_evidence_this_run_may_still_search(monkeypatch):
+    """Reuse of the previous answer's chunks goes through the current source map: a cited source that is no
+    longer searchable (deleted, unauthorized, not connected) is never fetched."""
+    from app.pipeline.context import RunContext
+    from app.rag import store
+    asked = []
+
+    def fetch(vector, scope, keys):
+        asked.append(keys)
+        return [Chunk(9, "src7", "handoff.pdf", 3, 1, "Feature two: every answer shows its cost.", 0.4)]
+    monkeypatch.setattr(store, "fetch", fetch)
+    monkeypatch.setattr(agent.embeddings, "embed_one", lambda text: [0.0])
+    _searches(monkeypatch, lambda q: [])
+    _models(monkeypatch, rewrite_text="Second feature of BharatAgent Studio")
+    ctx = RunContext(question="Explain the second feature in simple words.", model_key="gemini")
+    ctx.history = [("user", "What are its main features?"), ("assistant", "Cited answers [1]. Cost on every answer [2].")]
+    ctx.previous_citations = [{"source_id": "doc", "file": "handoff.pdf", "chunk": 3},
+                              {"source_id": "deleted_doc", "file": "old.pdf", "chunk": 1},
+                              {"source_id": "t1", "file": "calculator (tool)", "chunk": 0}]
+    relevant, _ = agent._retrieve(ctx, {"src7": "doc"})
+    assert asked == [[("src7", 3)]]                     # only the source this run may search
+    assert [c.chunk_index for c in relevant] == [3] and ctx.retrieval_info["reused"] == ["handoff.pdf chunk 3"]
+
+
+def test_a_language_asked_for_in_the_question_is_used():
+    from app.pipeline.context import RunContext
+    from app.pipeline.graph import Node
+    from app.pipeline.stages import input as input_stage
+    agent_node = Node(id="n4", type="agent", config={"language": "en"})
+    for question, lang in [("Explain the same thing in Telugu.", "te"), ("Explain it in Hindi.", "hi"),
+                           ("telugu lo cheppu", "te"), ("What is this project about?", "en")]:
+        ctx = RunContext(question=question)
+        input_stage.run(ctx, agent_node, agent_node)
+        assert ctx.language == lang, question
+    ctx = RunContext(question="Explain it in Hindi.", requested_language="te")  # the chat selector still wins
+    input_stage.run(ctx, agent_node, agent_node)
+    assert ctx.language == "te"
+
+
+def test_follow_up_detection_handles_typos_and_topic_changes():
+    from app.rag import conversation
+    history = [("user", "What is this project about?"), ("assistant", "It is BharatAgent Studio [1].")]
+    for q in ["tell clerly about this allobrate the explination", "Explain it in detail.", "What are its main features?",
+              "Give me an example.", "Summarize everything in five points.", "Continue the explanation.", "And the fee?"]:
+        assert conversation.is_follow_up(q, history), q
+    for q in ["What is the Spoon-Knife repository meant for?", "What is the monthly parking fee at the company office?",
+              "Above what order value is delivery free on the e-commerce platform?"]:
+        assert not conversation.is_follow_up(q, history), q
+    assert not conversation.is_follow_up("Explain it in detail.", [])  # no conversation yet
+    assert conversation.clean_rewrite('Query: "BharatAgent Studio overview"', "x") == "BharatAgent Studio overview"
+    assert conversation.clean_rewrite("I don't know.", "x") is None
+
+
+def test_rewrite_never_switches_models_it_falls_back_to_the_earlier_question(monkeypatch, full_graph):
+    """If the chosen model cannot rewrite (rate limit, quota), the rewrite stops instead of loading another
+    model just for a search query; the search uses the earlier question with this one."""
+    from app.models import generate
+    from app.rag import conversation
+    searched = _searches(monkeypatch, lambda q: [HANDOFF] if "project" in q else [])
+    real = generate.stream
+
+    def stream(model, system, prompt, local_only=False):
+        if system == conversation.REWRITE_SYSTEM:
+            yield {"fallback": {"from": model, "to": "local", "code": "quota_minute", "reason": "429"}}
+            raise AssertionError("the rewrite must stop at the first fallback")
+        yield from real(model, system, prompt, local_only)
+    monkeypatch.setattr(agent.generate, "stream", stream)
+    _models(monkeypatch)
+    history = [("user", "What is this project about?"), ("assistant", FIRST_ANSWER)]
+    events = list(run_pipeline(Graph.model_validate(only_s1(full_graph)), "Explain it in detail.", history=history))
+    assert searched[0] == "What is this project about? Explain it in detail." and events[-1]["supported"] is True
+    assert any("not rewritten" in w for w in events[-1]["warnings"])
+    assert conversation.clean_rewrite("BharatAgent Studio how it works\x00", "x") == "BharatAgent Studio how it works"
+
+
+def test_detailed_answers_are_shorter_in_telugu_and_hindi():
+    """A detailed Telugu answer of eight sentences hit the local model's output cap (1,550 tokens) and lost its
+    citations; detailed answers in Telugu and Hindi ask for at most four sentences."""
+    from app.rag import prompt
+    assert "up to 8 full sentences" in prompt.rag_prompt("q", [HANDOFF], detailed=True, language="en")
+    for lang in ("te", "hi"):
+        assert "up to 4 full sentences" in prompt.rag_prompt("q", [HANDOFF], detailed=True, language=lang)
+    assert "one or two full sentences" in prompt.rag_prompt("q", [HANDOFF], detailed=False, language="te")

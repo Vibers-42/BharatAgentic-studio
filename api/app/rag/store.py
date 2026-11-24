@@ -79,6 +79,25 @@ def search(question_vector: list[float], source_ids: list[str], k: int, scope: s
     return [Chunk(*r[:6], similarity=float(r[6]), origin=r[7]) for r in rows]
 
 
+def fetch(question_vector: list[float], scope: str, keys: list[tuple[str, int]]) -> list[Chunk]:
+    """Chunks named by (source id, chunk index), re-read from the database now, with their similarity to the
+    question. Used to reuse the evidence of an earlier answer: a chunk whose source was deleted, re-indexed or
+    is not in this scope simply is not found."""
+    if not keys:
+        return []
+    vec = np.array(question_vector, dtype=np.float32)
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, source_id, file_name, chunk_index, page, content, 1 - (embedding <=> %s) AS similarity, origin
+            FROM chunks
+            WHERE scope = %s AND (source_id, chunk_index) IN (SELECT * FROM unnest(%s::text[], %s::int[]))
+            """,
+            (vec, scope, [k[0] for k in keys], [k[1] for k in keys]),
+        ).fetchall()
+    return [Chunk(*r[:6], similarity=float(r[6]), origin=r[7]) for r in rows]
+
+
 def chunk_vectors(chunk_ids: list[int]) -> dict[int, list[float]]:
     """Stored embeddings of the given chunks, for checking claims against them without re-embedding."""
     if not chunk_ids:

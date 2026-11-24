@@ -13,8 +13,8 @@ from ... import usage
 from ...config import settings
 from ...models import generate, pricing
 from ...models.generate import LANGUAGE_NOTES, AllProvidersFailed, is_local
-from ...rag import citations, claims, prompt
-from ...rag.retrieve import retrieve
+from ...rag import citations, claims, conversation, embeddings, prompt, store
+from ...rag.retrieve import BROAD_MAX, retrieve
 from ...rag.store import Chunk
 from ...tools import planner, runner
 from ..context import RunContext
@@ -138,31 +138,93 @@ def _to_nodes(chunks: list[Chunk], searchable: dict[str, str]) -> list[Chunk]:
     return [dataclasses.replace(c, source_id=searchable.get(c.source_id, c.source_id)) for c in chunks]
 
 
-def _search_text(ctx: RunContext) -> str:
-    """A short follow-up ("which file?") is searched together with the previous question of the conversation."""
-    earlier = [text for role, text in ctx.history if role == "user"]
-    return f"{earlier[-1]} {ctx.question}" if earlier and len(ctx.question) < 120 else ctx.question
+def _rewrite(ctx: RunContext) -> str | None:
+    """Turn a follow-up into a standalone search query with one short call to the same model as the answer
+    (same local-only rule, so a local-only run never reaches a cloud model). Counted as its own step in tokens
+    and cost. Returns None if the model is unavailable or gives nothing usable; the search then falls back to
+    the previous question plus this one."""
+    text = ""
+    events = generate.stream(ctx.model_key, conversation.REWRITE_SYSTEM,
+                             conversation.rewrite_prompt(ctx.question, ctx.history), ctx.local_only)
+    try:
+        for event in events:
+            if "text" in event:
+                text += event["text"]
+            elif "reset" in event:
+                text = ""
+            elif "fallback" in event:
+                # Not worth switching models for a search query (loading another local model can take a
+                # minute): stop here and search with the earlier question instead. The answer step keeps
+                # its own retry and fallback.
+                events.close()
+                ctx.warnings.append(f"The follow-up was not rewritten ({event['fallback']['code']}); searched with "
+                                    "the earlier question instead.")
+                return None
+            elif "done" in event:
+                ctx.generations.append(event["done"])
+                ctx.generation_steps.append("query_rewrite")
+    except AllProvidersFailed as exc:
+        ctx.warnings.append(f"The follow-up could not be rewritten ({exc.code}); searched with the earlier question instead.")
+        return None
+    return conversation.clean_rewrite(text, ctx.question)
 
 
-def _retrieve(ctx: RunContext, source_ids: list[str]) -> tuple[list[Chunk], list[Chunk]]:
-    """The question is always searched on its own. In a conversation a short question is also searched together
-    with the previous one ("what happens if it is down?"); the two result lists are merged, best match first.
-    Searching only the joined text let an earlier topic crowd out a new one ("what is the repo for?" after a
-    delivery question returned only the PDF)."""
-    relevant, candidates = retrieve(ctx.question, source_ids, ctx.scope)
-    text = _search_text(ctx)
-    if text == ctx.question:
-        return relevant, candidates
-    more_relevant, more_candidates = retrieve(text, source_ids, ctx.scope)
+def _previous_evidence(ctx: RunContext, searchable: dict[str, str], query: str) -> list[Chunk]:
+    """The chunks the previous answer cited, read again now: only from sources this run may search (deleted,
+    unauthorized or re-pointed sources drop out), with their current text. Tool results are not reused."""
+    node_to_source = {node: src for src, node in searchable.items()}
+    keys, files = [], {}
+    for cit in ctx.previous_citations:
+        src = node_to_source.get(cit.get("source_id"))
+        if src is not None and isinstance(cit.get("chunk"), int):
+            keys.append((src, cit["chunk"]))
+            files[(src, cit["chunk"])] = cit.get("file")
+    if not keys:
+        return []
+    found = store.fetch(embeddings.embed_one(query), ctx.scope, keys)
+    return [c for c in found if files.get((c.source_id, c.chunk_index)) == c.file_name]
 
-    def merge(a: list[Chunk], b: list[Chunk]) -> list[Chunk]:
-        best: dict[int, Chunk] = {}
-        for c in a + b:
+
+def _retrieve(ctx: RunContext, searchable: dict[str, str]) -> tuple[list[Chunk], list[Chunk]]:
+    """What to search for, and with what:
+    - a standalone question is searched as it is (no extra model call, and no earlier topic mixed in);
+    - a follow-up is rewritten into a standalone query, and both it and the question are searched;
+    - a request to transform the previous answer (explain, simplify, example, summarise, translate, continue)
+      also reuses the chunks that answer cited, re-checked against what this run may search;
+    - a broad question gets several sections (bounded), not just the single closest chunk."""
+    source_ids = list(searchable)
+    follow = conversation.is_follow_up(ctx.question, ctx.history)
+    queries, rewritten = [ctx.question], None
+    if follow:
+        rewritten = _rewrite(ctx)
+        if rewritten:
+            queries.insert(0, rewritten)
+        else:
+            earlier = [text for role, text, *_ in ctx.history if role == "user"]
+            queries.insert(0, f"{earlier[-1][:300]} {ctx.question}")
+    queries = list(dict.fromkeys(queries))
+    broad = any(conversation.is_broad(q) for q in queries)
+    limit = BROAD_MAX if broad else settings.top_k
+    best: dict[int, Chunk] = {}
+    pool: dict[int, Chunk] = {}
+    for q in queries:
+        relevant, candidates = retrieve(q, source_ids, ctx.scope, broad)
+        for c in relevant:
             if c.id not in best or c.similarity > best[c.id].similarity:
                 best[c.id] = c
-        return sorted(best.values(), key=lambda c: c.similarity, reverse=True)[:settings.top_k]
-
-    return merge(relevant, more_relevant), merge(candidates, more_candidates)
+        for c in candidates:
+            if c.id not in pool or c.similarity > pool[c.id].similarity:
+                pool[c.id] = c
+    reused: list[Chunk] = []
+    if follow and conversation.transforms(ctx.question) and ctx.previous_citations:
+        reused = [c for c in _previous_evidence(ctx, searchable, queries[0]) if c.id not in best]
+    ranked = sorted(best.values(), key=lambda c: c.similarity, reverse=True)
+    relevant = (reused + ranked)[:max(limit, len(reused))]
+    candidates = sorted(pool.values(), key=lambda c: c.similarity, reverse=True)[:limit]
+    ctx.retrieval_info = {"follow_up": follow, "queries": queries, "rewrite": rewritten, "broad": broad,
+                          "reused": [f"{c.file_name} chunk {c.chunk_index}" for c in reused]}
+    ctx.detailed = broad or bool(conversation.transforms(ctx.question) - {"translate"})
+    return relevant, candidates
 
 
 def _with_history(ctx: RunContext) -> str:
@@ -199,9 +261,10 @@ def run(ctx: RunContext, node: Node, graph: Graph) -> Iterator[dict]:
     relevant: list[Chunk] = []
     if ctx.sources and ctx.route != "direct":
         searchable = _searchable(ctx)
-        relevant, candidates = _retrieve(ctx, list(searchable))
+        relevant, candidates = _retrieve(ctx, searchable)
         relevant, candidates = _to_nodes(relevant, searchable), _to_nodes(candidates, searchable)
         detail["retrieval"] = {
+            **ctx.retrieval_info,
             "scope": ctx.scope,
             "searched": list(searchable.values()),
             "min_similarity": settings.min_similarity,
@@ -229,8 +292,8 @@ def run(ctx: RunContext, node: Node, graph: Graph) -> Iterator[dict]:
         return finish(mode="rag", model_called=bool(ctx.generations),
                       reason="No chunk from the connected sources is relevant enough to answer.")
 
-    yield from _generate(ctx, node, prompt.rag_system(ctx.language), prompt.rag_prompt(_with_history(ctx), evidence),
-                         "answer", stream_text=True)
+    yield from _generate(ctx, node, prompt.rag_system(ctx.language),
+                         prompt.rag_prompt(_with_history(ctx), evidence, detailed=ctx.detailed, language=ctx.language), "answer", stream_text=True)
     ctx.answer = ctx.generations[-1].text
     checked = citations.check(ctx.answer, evidence)
     ctx.citations = checked["citations"]

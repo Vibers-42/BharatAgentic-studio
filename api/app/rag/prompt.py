@@ -21,20 +21,31 @@ def rag_system(language: str) -> str:
         "A source number alone is not an answer.\n"
         "2. If the sources do not contain the answer, reply with exactly this sentence and nothing else: "
         f"{DONT_KNOW[language]}\n"
-        "3. Do not use outside knowledge and do not guess.\n"
+        "3. Do not use outside knowledge and do not guess. Earlier messages of the conversation only tell you "
+        "what is being asked; they are not sources, so every fact must come from the numbered sources.\n"
         f"4. Write the answer in {LANGUAGE_NAMES[language]}, even if the sources are in another language. "
         "Keep numbers, names and amounts exactly as they appear in the sources.\n"
-        "5. Be concise."
+        "5. Be concise, unless the question asks for detail, a summary, points or an example."
     )
 
 
-def rag_prompt(question: str, chunks: list[Chunk]) -> str:
+def rag_prompt(question: str, chunks: list[Chunk], detailed: bool = False, language: str = "en") -> str:
     blocks = []
     for n, c in enumerate(chunks, start=1):
         where = f"{c.file_name}, page {c.page}, chunk {c.chunk_index}" if c.page else f"{c.file_name}, chunk {c.chunk_index}"
         blocks.append(f"[{n}] ({where})\n{c.content}")
     # The reminder after the question matters for small local models, which otherwise tend to reply
     # with a bare source number or drop the exact figures.
+    if detailed:
+        # A request for detail, a summary, points, an example or a simpler explanation: longer, but every
+        # sentence still ends with its source number and is checked against it.
+        return ("Sources:\n\n" + "\n\n".join(blocks) + f"\n\nQuestion: {question}\n\n"
+                # Telugu and Hindi need several times more tokens per sentence: eight sentences ran into the
+                # local model's output cap (OLLAMA_NUM_PREDICT) and the cut-off answer lost its citations.
+                f"Answer in up to {4 if language in ('te', 'hi') else 8} full sentences (if points are asked for, one sentence per point, each on "
+                "its own line starting with '- '). Use only what the sources say, copy numbers exactly, and end "
+                "every sentence with its source number, e.g. 'The fee is Rs. 300 [1].' If the sources do not "
+                "answer it, reply with the exact sentence from rule 2.")
     return ("Sources:\n\n" + "\n\n".join(blocks) + f"\n\nQuestion: {question}\n\n"
             "Answer the question in one or two full sentences. Copy numbers, amounts and time limits exactly "
             "from the sources, and end each sentence with its source number, e.g. 'The fee is Rs. 300 [1].' "

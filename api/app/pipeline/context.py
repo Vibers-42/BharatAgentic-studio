@@ -19,6 +19,7 @@ class RunContext:
     source_map: dict | None = None
     history: list = field(default_factory=list)   # earlier [(role, text)] of this conversation, newest last
     owner: dict = field(default_factory=dict)      # org_id, project_id, graph_id, conversation_id for the usage row
+    previous_citations: list = field(default_factory=list)  # what the last answer of this conversation cited
 
     # Filled in by the stages, in order.
     language: str = "en"                    # input: language the answer must be in
@@ -41,3 +42,5 @@ class RunContext:
     comparison: list[dict] = field(default_factory=list)  # agent: the same tokens priced on every model
     model_note: str | None = None           # agent: honest note, e.g. small local model in Telugu
     warnings: list[str] = field(default_factory=list)
+    retrieval_info: dict = field(default_factory=dict)  # agent: search queries, rewrite, reused evidence
+    detailed: bool = False                  # agent: the question asks for more than a one-line answer

@@ -1,6 +1,8 @@
 """Input stage: cleans the question and decides the answer language.
-Order: the chat's language selector, else the script the question is written in, else the agent's setting."""
+Order: the chat's language selector, else a language the question asks for ("explain it in Telugu"), else the
+script the question is written in, else the agent's setting."""
 
+from ...rag.conversation import requested_language
 from ..context import RunContext
 from ..graph import LANGUAGES, Node
 
@@ -24,8 +26,11 @@ def run(ctx: RunContext, node: Node, agent: Node) -> dict:
     ctx.question = " ".join(ctx.question.split())  # collapse extra spaces and newlines
     detected = detect_language(ctx.question)
 
+    asked = requested_language(ctx.question)  # "explain it in Telugu", "हिंदी में बताओ"
     if ctx.requested_language in LANGUAGES:
         ctx.language, chosen_by = ctx.requested_language, "chat selector"
+    elif asked in LANGUAGES:
+        ctx.language, chosen_by = asked, "asked in the question"
     elif detected:
         ctx.language, chosen_by = detected, "question script"
     elif agent.config.get("language") in LANGUAGES:

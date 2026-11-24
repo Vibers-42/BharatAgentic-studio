@@ -137,7 +137,7 @@ QUESTION = "My lab test cost Rs. 1200 and I cancelled before the sample was coll
 
 
 def test_tool_result_reaches_the_model_and_is_cited(monkeypatch, full_graph):
-    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([REFUND], [REFUND]))
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline", broad=False: ([REFUND], [REFUND]))
     seen = scripted_model(monkeypatch, '{"calls": [{"node_id": "t1", "tool": "calculator", "args": {"expression": "1200 * 80%"}}]}',
                           "You get 960 rupees back [2], because 80 percent is refunded [1].")
     events = list(run_pipeline(tool_graph(full_graph), QUESTION))
@@ -153,7 +153,7 @@ def test_tool_result_reaches_the_model_and_is_cited(monkeypatch, full_graph):
 
 
 def test_unconnected_tool_is_never_offered_to_the_model(monkeypatch, full_graph):
-    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([REFUND], [REFUND]))
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline", broad=False: ([REFUND], [REFUND]))
     seen = scripted_model(monkeypatch, '{"calls": [{"node_id": "t1", "tool": "calculator", "args": {"expression": "1+1"}}]}', "x [1].")
     graph = tool_graph(full_graph, keep=("s1",))  # no tool drawn into the agent
     events = list(run_pipeline(graph, QUESTION))
@@ -162,7 +162,7 @@ def test_unconnected_tool_is_never_offered_to_the_model(monkeypatch, full_graph)
 
 
 def test_failing_tool_is_reported_and_the_answer_continues(monkeypatch, full_graph):
-    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([REFUND], [REFUND]))
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline", broad=False: ([REFUND], [REFUND]))
     scripted_model(monkeypatch, '{"calls": [{"node_id": "t1", "tool": "calculator", "args": {"expression": "1200/0"}}]}',
                    "80 percent of the test amount is refunded [1].")
     events = list(run_pipeline(tool_graph(full_graph), QUESTION))
@@ -172,7 +172,7 @@ def test_failing_tool_is_reported_and_the_answer_continues(monkeypatch, full_gra
 
 
 def test_order_question_uses_the_mcp_tool(monkeypatch, full_graph):
-    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([], []))
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline", broad=False: ([], []))
     scripted_model(monkeypatch, '{"calls": [{"node_id": "t2", "tool": "get_order", "args": {"order_id": "ORD-1002"}}]}',
                    "Order ORD-1002 gets a refund of 960 [1].")
     events = list(run_pipeline(tool_graph(full_graph, keep=("t2",)), "What is the refund for order ORD-1002?"))
@@ -185,7 +185,7 @@ def test_local_only_tool_plan_uses_only_local_models(monkeypatch, full_graph):
     from app.models import ollama
     cloud = []
     monkeypatch.setattr(gemini, "stream", lambda s, p, **k: cloud.append(1) or iter(()))
-    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([REFUND], [REFUND]))
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline", broad=False: ([REFUND], [REFUND]))
 
     def local(system, prompt, **kwargs):
         yield {"text": '{"calls": []}' if system == planner.PLANNER_SYSTEM else "80 percent is refunded [1]."}
@@ -257,7 +257,7 @@ def test_tools_endpoint_lists_read_only_mcp_tools():
 
 def test_unreadable_tool_plan_is_asked_for_once_more(monkeypatch, full_graph):
     """Phase 7.1: GPT-OSS sometimes returns an empty plan; one retry, then the tool runs."""
-    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([REFUND], [REFUND]))
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline", broad=False: ([REFUND], [REFUND]))
     plans = iter(["", '{"calls": [{"node_id": "t1", "tool": "calculator", "args": {"expression": "1200 * 80%"}}]}'])
 
     def stream(system, prompt, **kwargs):
@@ -273,7 +273,7 @@ def test_unreadable_tool_plan_is_asked_for_once_more(monkeypatch, full_graph):
 
 
 def test_tool_plan_is_retried_only_once(monkeypatch, full_graph):
-    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([REFUND], [REFUND]))
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline", broad=False: ([REFUND], [REFUND]))
     seen = scripted_model(monkeypatch, "no plan here", "80 percent of the test amount is refunded [1].")
     events = list(run_pipeline(tool_graph(full_graph), QUESTION))
     assert len(seen) == 3 and "The model did not return a tool plan." in events[-1]["warnings"]
@@ -283,7 +283,7 @@ def test_embedding_model_down_is_a_clear_error(monkeypatch, full_graph):
     """Phase 7.1: with Ollama stopped the question cannot be embedded; the run ends with a named error."""
     from app.rag.embeddings import EmbeddingError
 
-    def down(q, ids, scope="inline"):
+    def down(q, ids, scope="inline", broad=False):
         raise EmbeddingError("Cannot reach Ollama at http://ollama:11434")
     monkeypatch.setattr(agent, "retrieve", down)
     events = list(run_pipeline(tool_graph(full_graph, keep=("s1",)), "What is the refund policy?"))

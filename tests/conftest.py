@@ -61,7 +61,7 @@ def offline_models(monkeypatch, request):
     monkeypatch.setattr(generate, "sleep", lambda seconds: None)
     if "real_models" in request.keywords:
         return
-    monkeypatch.setattr(agent, "retrieve", lambda question, source_ids, scope="inline": ([], []))
+    monkeypatch.setattr(agent, "retrieve", lambda question, source_ids, scope="inline", broad=False: ([], []))
     from app.rag import claims
     monkeypatch.setattr(claims, "verify", lambda answer, chunks: {"answer": answer, "claims": [], "removed": 0})
     # No real MCP server in offline tests: the orders-db tools are listed, and calls answer from a stub.
