@@ -3,8 +3,11 @@ Run locally with: uvicorn app.main:app --reload"""
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+import psycopg
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from psycopg_pool import PoolTimeout
 
 from .db import close_db, init_db
 from .routes import graphs, health, models, pipeline, sources, tools, usage, users
@@ -26,6 +29,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+
+# The database being down (restart, crash) is reported as 503 with a plain message, not a bare 500.
+@app.exception_handler(psycopg.OperationalError)
+@app.exception_handler(PoolTimeout)
+async def database_unavailable(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": "The database is not reachable right now. "
+                                                            "Try again in a moment."})
+
 
 app.include_router(health.router)
 app.include_router(pipeline.router)

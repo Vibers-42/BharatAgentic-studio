@@ -399,6 +399,20 @@ def test_qwen3_is_asked_not_to_think(server, monkeypatch):
     assert "think" not in seen
 
 
+@pytest.mark.real_models
+def test_local_replies_have_an_output_cap(server, monkeypatch):
+    """Phase 7.1: qwen2.5:3b once looped for 40,960 tokens (11 minutes) on a Telugu question."""
+    seen = {}
+    real_stream = ollama.httpx.stream
+
+    def spy(method, url, json=None, **kw):
+        seen.update(json)
+        return real_stream(method, url, json=json, **kw)
+    monkeypatch.setattr(ollama.httpx, "stream", spy)
+    list(ollama.stream("s", SOURCES, model="qwen2.5:3b"))
+    assert seen["options"]["num_predict"] == 1536
+
+
 def test_two_local_models_are_configured():
     assert generate.PROVIDERS["local"].model_id() == ollama.settings.ollama_chat_model
     assert generate.PROVIDERS["local_small"].model_id() == ollama.settings.ollama_backup_model

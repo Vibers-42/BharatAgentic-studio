@@ -57,6 +57,17 @@ The first runs of `scripts/eval_languages.py` found three pipeline bugs, now fix
   Status; dark and light themes; phone to desktop.
 - Verified by `scripts/verify_phase7.ps1` and the browser journeys in `scripts/ui_journeys.py`.
 
+## Phase 7.1: reliability and readiness audit
+
+- Verified: knowledge persistence across api, web and full-stack restarts; re-use without re-upload;
+  per-agent isolation under concurrent mixed requests; local-only with zero cloud requests (instrumented);
+  recovery from Ollama, database, MCP and provider failures; four models on nine questions each.
+- Fixed: duplicate chunks from concurrent re-ingestion (advisory lock), dead pooled connections after a
+  database restart, bare 500s during database outages (now 503), no restart policies, unbounded local
+  generation (`OLLAMA_NUM_PREDICT`), empty tool plans (one retry), generic error code when Ollama is down.
+- Documents: docs/PHASE_7_1_AUDIT.md, docs/PERFORMANCE_BENCHMARKS.md, docs/PHASE_8_READINESS.md.
+- Scripts: verify_phase7_1.ps1, model_matrix.py, load_test.py, knowledge_scaling.py, extended ui_journeys.py.
+
 ## Known issues to revisit
 
 - `gemini-2.5-flash` is marked deprecated on Google's pricing page; from 2026-12-01 requests route to

@@ -249,3 +249,40 @@ def test_tools_endpoint_lists_read_only_mcp_tools():
     assert body["mcp_servers"][0]["name"] == "orders-db" and body["mcp_servers"][0]["ok"]
     assert [t["name"] for t in body["mcp_servers"][0]["tools"]] == ["get_order", "cancel_order"]
     assert [t["read_only"] for t in body["mcp_servers"][0]["tools"]] == [True, False]
+
+
+
+def test_unreadable_tool_plan_is_asked_for_once_more(monkeypatch, full_graph):
+    """Phase 7.1: GPT-OSS sometimes returns an empty plan; one retry, then the tool runs."""
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([REFUND], [REFUND]))
+    plans = iter(["", '{"calls": [{"node_id": "t1", "tool": "calculator", "args": {"expression": "1200 * 80%"}}]}'])
+
+    def stream(system, prompt, **kwargs):
+        yield {"text": next(plans) if system == planner.PLANNER_SYSTEM else "You get 960 rupees back [2]."}
+        yield {"usage": {"input_tokens": 10, "output_tokens": 5}}
+    monkeypatch.setattr(gemini, "stream", stream)
+    events = list(run_pipeline(tool_graph(full_graph), QUESTION))
+    final = events[-1]
+    assert final["tool_calls"][0]["output"] == "1200 * 80% = 960"
+    assert not any("tool plan" in w for w in final["warnings"])
+    agent_done = next(e for e in events if e.get("stage") == "agent" and e.get("status") == "done")
+    assert [s["step"] for s in agent_done["detail"]["generation"]["steps"]] == ["tool_plan", "tool_plan", "answer"]
+
+
+def test_tool_plan_is_retried_only_once(monkeypatch, full_graph):
+    monkeypatch.setattr(agent, "retrieve", lambda q, ids, scope="inline": ([REFUND], [REFUND]))
+    seen = scripted_model(monkeypatch, "no plan here", "80 percent of the test amount is refunded [1].")
+    events = list(run_pipeline(tool_graph(full_graph), QUESTION))
+    assert len(seen) == 3 and "The model did not return a tool plan." in events[-1]["warnings"]
+
+
+def test_embedding_model_down_is_a_clear_error(monkeypatch, full_graph):
+    """Phase 7.1: with Ollama stopped the question cannot be embedded; the run ends with a named error."""
+    from app.rag.embeddings import EmbeddingError
+
+    def down(q, ids, scope="inline"):
+        raise EmbeddingError("Cannot reach Ollama at http://ollama:11434")
+    monkeypatch.setattr(agent, "retrieve", down)
+    events = list(run_pipeline(tool_graph(full_graph, keep=("s1",)), "What is the refund policy?"))
+    err = next(e for e in events if e["type"] == "error")
+    assert err["code"] == "embedding_unavailable" and "Cannot reach Ollama" in err["message"]

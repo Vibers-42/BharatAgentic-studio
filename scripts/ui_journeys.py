@@ -9,6 +9,11 @@ a real PDF through the file inputs, and wait for real answers from the api and t
   3. Chat: local-only on, MCP tool on, ask about order ORD-1002 -> cited answer from the MCP tool.
   4. Usage and Status pages load with data.
   5. Every screen at 1440, 1024, 768 and 390 px wide: no sideways scrolling.
+  6. Second session: the whole stack is restarted (volumes kept), then a NEW browser profile opens the saved
+     agent, sees its PDF, repo and docs page still indexed, and asks without re-uploading. This shows
+     persistent shared data, not authenticated collaboration (there are no accounts yet).
+  Both sessions also fail if the page logs a console error or an uncaught exception.
+  (The builder journey also adds the GitHub repo and the docs link through the inspector.)
 
 Screenshots are saved in docs/screenshots. Prints PASS / FAIL per check; exit code 1 if anything failed.
 
@@ -69,14 +74,28 @@ class Browser:
             raise RuntimeError("the browser did not start")
         self.ws = connect(page["webSocketDebuggerUrl"], max_size=50 * 1024 * 1024).__enter__()
         self.next_id = 0
+        self.console_errors: list[str] = []  # uncaught exceptions, console.error and failed requests
         self.send("Page.enable")
         self.send("Runtime.enable")
+        self.send("Log.enable")
+
+    def _note(self, msg: dict):
+        m, p = msg.get("method"), msg.get("params", {})
+        if m == "Runtime.exceptionThrown":
+            self.console_errors.append(p.get("exceptionDetails", {}).get("text", "exception"))
+        elif m == "Runtime.consoleAPICalled" and p.get("type") == "error":
+            self.console_errors.append(" ".join(str(a.get("value", a.get("description", ""))) for a in p.get("args", []))[:160])
+        elif m == "Log.entryAdded" and p.get("entry", {}).get("level") == "error":
+            e = p["entry"]
+            self.console_errors.append(f"{e.get('text', '')[:120]} {e.get('url', '')}")
 
     def send(self, method: str, params: dict | None = None) -> dict:
         self.next_id += 1
         self.ws.send(json.dumps({"id": self.next_id, "method": method, "params": params or {}}))
         while True:
             msg = json.loads(self.ws.recv())
+            if "method" in msg:
+                self._note(msg)
             if msg.get("id") == self.next_id:
                 if "error" in msg:
                     raise RuntimeError(f"{method}: {msg['error']}")
@@ -164,13 +183,14 @@ def builder_journey(b: Browser, base: str, model: str):
     helpers(b)
     b.js("__click('button[title=\"Start a new agent\"]')")
     b.js("__set('input[aria-label=\"Agent name\"]', 'Clinic refunds (UI journey)')")
-    for kind, node_id in (("PDF", "src1"), ("Calculator", "tool1"), ("MCP tool", "tool2")):
+    for kind, node_id in (("PDF", "src1"), ("GitHub repo", "src2"), ("Docs link", "src3"), ("Calculator", "tool1"), ("MCP tool", "tool2")):
         b.js(f"__click('button.palette-item', '{kind}')")
         b.wait(f"document.querySelector('[data-node-id=\"{node_id}\"]')", 5)
         b.js("__click('input[aria-label=\"Connected to Agent\"]')")
-    b.wait("document.querySelectorAll('.react-flow__edge').length === 7", 5)
+    b.wait("document.querySelectorAll('.react-flow__edge').length === 9", 5)
     edges = b.js("document.querySelectorAll('.react-flow__edge').length")
-    check("builder: PDF, Calculator and MCP blocks added and connected to the Agent", edges == 7, f"{edges} lines on the canvas")
+    check("builder: PDF, GitHub repo, Docs link, Calculator and MCP blocks added and connected to the Agent", edges == 9,
+          f"{edges} lines on the canvas")
     overlaps = b.js("""(() => { const r = [...document.querySelectorAll('.react-flow__node')].map(n => [n.dataset.id, n.getBoundingClientRect()]);
       const hit = []; for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) { const [a, A] = r[i], [b, B] = r[j];
       if (A.left < B.right && B.left < A.right && A.top < B.bottom && B.top < A.bottom) hit.push(a + '/' + b); } return hit; })()""")
@@ -190,6 +210,18 @@ def builder_journey(b: Browser, base: str, model: str):
     indexed = b.wait("__text('[data-node-id=\"src1\"]').includes('chunks')", 180)
     check("builder: PDF uploaded in the inspector shows its chunks on the node", indexed, b.js("__text('[data-node-id=\"src1\"] .node-line')"))
     check("builder: the agent stays saved after the upload", "Saved" in b.js("__text('.builder-title')"), b.js("__text('.builder-title .pill')"))
+    for node_id, label, url, verb in (("src2", "GitHub repo", "https://github.com/octocat/Spoon-Knife", "Download"),
+                                      ("src3", "Docs link", "https://example.com", "Fetch")):
+        b.js(f"document.querySelector('.react-flow__node[data-id=\"{node_id}\"]').click(); true")
+        b.wait(f"document.querySelector('input[aria-label=\"{label} address\"]')", 5)
+        b.js(f"__set('input[aria-label=\"{label} address\"]', '{url}')")
+        b.js(f"__click('.side-panel .link-form button', '{verb}')")
+        ok = b.wait(f"__text('[data-node-id=\"{node_id}\"]').includes('chunks')", 180)
+        check(f"builder: {label} indexed from the inspector and shown on its block", ok,
+              b.js(f"__text('[data-node-id=\"{node_id}\"] .node-line')") or b.js("__text('.side-panel .inline-msg')"))
+    b.js("__click('.builder-actions button', 'Save')")  # the links are part of the agent's settings
+    check("builder: agent saved again with its links", b.wait("__text('.builder-title .pill').includes('Saved')", 15),
+          b.js("__text('.builder-title .pill')"))
     b.shot("builder-agent-with-sources")
 
     b.js("__click('.builder-actions button', 'Run')")
@@ -209,7 +241,61 @@ def builder_journey(b: Browser, base: str, model: str):
     check("builder: PDF node cited", status["src1"] == "cited", status["src1"])
     check("builder: answer says 960 and cites the PDF and the calculator",
           "960" in answer and b.js("document.querySelectorAll('.run-answer .citations li').length") >= 2, answer[:160])
+    meta = b.js("__text('.run-answer .answer-meta')")
+    check("builder: the answer shows the model that answered, tokens and cost", f"{model}:" in meta and " in " in meta and
+          ("No API cost" in meta or "₹" in meta), meta[:160])
     b.shot("builder-run-answer")
+    pill = b.js("__text('.builder-title .pill')")
+    import re
+    found = re.search(r"#(\d+)", pill)
+    return int(found.group(1)) if found else None
+
+
+def restart_stack(base: str) -> bool:
+    """docker compose restart: every container restarts, volumes and settings (GPU included) are kept."""
+    subprocess.run(["docker", "compose", "restart"], cwd=ROOT, capture_output=True, timeout=300)
+    for _ in range(120):
+        try:
+            if json.load(urllib.request.urlopen(f"{base}/api/health", timeout=3)).get("ok"):
+                return True
+        except Exception:  # noqa: BLE001 - not up yet
+            time.sleep(2)
+    return False
+
+
+def second_session_journey(exe: str, base: str, gid: int | None, restart: bool):
+    """A different browser profile (no shared storage) opens the saved agent and asks without re-uploading.
+    This shows persistent, shared application data; it is NOT authenticated collaboration (no accounts yet)."""
+    if gid is None:
+        check("second session: needs the agent saved by the builder journey", False)
+        return
+    if restart:
+        check("second session: whole stack restarted (volumes kept) before the new session", restart_stack(base))
+    b2 = Browser(exe)
+    try:
+        b2.viewport(1440, 900)
+        b2.goto(f"{base}/#builder")
+        helpers(b2)
+        b2.wait(f"document.querySelector('select[aria-label=\"Open a saved agent\"] option[value=\"{gid}\"]')", 20)
+        b2.js(f"__set('select[aria-label=\"Open a saved agent\"]', '{gid}')")
+        ok = b2.wait("['src1','src2','src3'].every(id => __text('[data-node-id=\"' + id + '\"]').includes('chunks'))", 30)
+        check("second session: the saved agent opens with its PDF, repo and docs page still indexed", ok,
+              " | ".join(b2.js(f"__text('[data-node-id=\"{i}\"] .node-line')") for i in ("src1", "src2", "src3")))
+        b2.js("__click('.builder-actions button', 'Run')")
+        b2.wait("document.querySelector('#run-q')", 5)
+        b2.js("__set('#run-q', 'What is the Spoon-Knife repository meant for?')")
+        b2.js("__click('.run-form button', 'Run')")
+        done = b2.wait("document.querySelector('.run-answer .answer-meta')", 420)
+        cites = b2.js("__text('.run-answer .citations')")
+        answer = b2.js("__text('.run-answer .answer-text')")
+        check("second session: question answered from the repo without re-uploading, citing README.md",
+              done and "README.md" in cites and "fork" in answer.lower(), answer[:120])
+        check("second session: the repo block lit up as cited",
+              b2.js("document.querySelector('[data-node-id=\"src2\"]').dataset.status") == "cited")
+        b2.shot("second-session-after-restart")
+        check("second session: no browser console errors", not b2.console_errors, "; ".join(b2.console_errors[:3]))
+    finally:
+        b2.close()
 
 
 def knowledge_journey(b: Browser, base: str):
@@ -290,14 +376,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:3000")
     ap.add_argument("--model", default="local", choices=["local", "local_small", "groq", "gemini"])
-    ap.add_argument("--only", nargs="*", help="builder knowledge chat pages responsive")
+    ap.add_argument("--only", nargs="*", help="builder knowledge chat pages responsive second_session")
+    ap.add_argument("--no-restart", action="store_true", help="second session without restarting the stack first")
     args = ap.parse_args()
     exe = next((p for p in BROWSERS if os.path.exists(p)), None)
     if not exe:
         print("[SKIP] no Edge or Chrome found")
         return 0
     b = Browser(exe)
-    steps = {"builder": lambda: builder_journey(b, args.base, args.model), "knowledge": lambda: knowledge_journey(b, args.base),
+    saved = {}
+    steps = {"builder": lambda: saved.update(gid=builder_journey(b, args.base, args.model)),
+             "knowledge": lambda: knowledge_journey(b, args.base),
              "chat": lambda: chat_journey(b, args.base), "pages": lambda: pages_journey(b, args.base),
              "responsive": lambda: responsive_journey(b, args.base)}
     try:
@@ -308,8 +397,14 @@ def main():
                 step()
             except Exception as exc:  # a broken step is a failure, the next journey still runs
                 check(f"{name}: journey crashed", False, str(exc)[:200])
+        check("first session: no browser console errors", not b.console_errors, "; ".join(b.console_errors[:3]))
     finally:
         b.close()
+    if not args.only or "second_session" in args.only:
+        try:
+            second_session_journey(exe, args.base, saved.get("gid"), not args.no_restart)
+        except Exception as exc:  # noqa: BLE001
+            check("second session: journey crashed", False, str(exc)[:200])
     passed = sum(r[0] == "PASS" for r in results)
     print(f"\n{passed} passed, {len(results) - passed} failed. Screenshots: {SHOTS}")
     return 0 if passed == len(results) else 1

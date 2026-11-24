@@ -54,6 +54,8 @@ pip install -r tests/requirements.txt -r api/requirements.txt
 pytest tests                      # unit tests; db tests skip without TEST_DATABASE_URL
 cd web && npm test                # canvas model, SSE highlighting, formatting (Vitest)
 python scripts/ui_journeys.py     # real browser journeys in headless Edge or Chrome, saves screenshots
+python scripts/model_matrix.py    # the same 9 questions on all 4 models, real providers (docs/results)
+python scripts/load_test.py       # controlled load test (docs/PERFORMANCE_BENCHMARKS.md)
 bash scripts/verify_phase1.sh     # checks the running Docker stack end to end (Linux/macOS/Git Bash)
 ```
 
@@ -68,7 +70,11 @@ powershell -ExecutionPolicy Bypass -File scripts\verify_phase5.ps1              
 powershell -ExecutionPolicy Bypass -File scripts\verify_models.ps1                  # 4 models, fallback chain, local-only
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase6.ps1                  # builder, validation, SSE per node, dashboard
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase7.ps1                  # tools, MCP security, source status, UI journeys
+powershell -ExecutionPolicy Bypass -File scripts\verify_phase7_1.ps1                # persistence, integrity, privacy, recovery, security
 ```
+
+A run is only valid while Docker Desktop and the stack are up: the scripts report SKIP (never PASS) for checks
+they could not reach, and `verify_phase7_1.ps1` exits with code 2 if the api was not reachable at all.
 
 ## Pipeline graph and API
 
@@ -276,6 +282,32 @@ The interface is dark by default with a light theme (switch at the bottom of the
 phone to desktop width (the sidebar becomes a menu on small screens), uses no web fonts or icon packages,
 and has visible keyboard focus and labelled controls.
 
+## Reliability, backups and limits (Phase 7.1)
+
+Audit, benchmarks and the Phase 8 plan: [docs/PHASE_7_1_AUDIT.md](docs/PHASE_7_1_AUDIT.md),
+[docs/PERFORMANCE_BENCHMARKS.md](docs/PERFORMANCE_BENCHMARKS.md), [docs/PHASE_8_READINESS.md](docs/PHASE_8_READINESS.md).
+
+- **Everything is persistent:** agents, settings, chunk text and vectors in Postgres (`pgdata` volume); the
+  original uploaded PDFs in the `uploads` volume; models in the `ollama` volume. Restarting the api, the web,
+  or the whole stack (`docker compose down` + `up`, without `-v`) loses nothing, and nothing has to be
+  uploaded again.
+- **Automatic restart:** every service has `restart: unless-stopped`, so the stack comes back after Docker
+  Desktop or the computer restarts.
+- **Back up and restore** (keep the file somewhere safe; `backups/` is git-ignored):
+
+  ```powershell
+  docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f /tmp/backup.dump'
+  docker compose cp db:/tmp/backup.dump backups/backup.dump
+  ```
+
+  To restore into an empty database: `docker compose cp backups/backup.dump db:/tmp/backup.dump`, then
+  `docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/backup.dump'`.
+  Never run `docker compose down -v` on the main stack: `-v` deletes the volumes.
+- **Database outages** give a clear `503 The database is not reachable right now` and the api reconnects by
+  itself when the database is back.
+- **Local output cap:** a local model writes at most `OLLAMA_NUM_PREDICT` tokens per reply (default 1536);
+  without it the 3B model once looped for 11 minutes.
+
 ## Containers
 
 | Container    | Job |
@@ -307,6 +339,9 @@ web/                 React frontend
 - A question that uses a tool costs two model calls (the tool plan and the answer). On Qwen 3 14B on this
   laptop the plan takes about 6-10 s once the model is loaded (about 20-35 s for the first one), so a tool
   answer takes 15-30 s locally; on Groq it takes 1-3 s.
+- There are no accounts yet: the user switcher names who the usage belongs to, and the api trusts that name.
+  Agents are kept apart from each other, but anyone who can reach the api can read every agent. Do not
+  expose it to a network before Phase 8 adds authentication.
 - Tools are chosen by simple, explainable router rules (a calculation, or a question about orders); a
   question phrased differently may not use a tool. The orders data is fictional.
 

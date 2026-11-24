@@ -2,10 +2,12 @@
 # Networks: "data" (api <-> db, ollama), "tools" (api <-> mcp-runner), "frontend" (web <-> api).
 # mcp-runner is only on "tools", so a misbehaving tool can never reach the database.
 # Published ports bind to 127.0.0.1 so nothing is reachable from other machines on the LAN.
+# restart: unless-stopped brings every service back after Docker Desktop or the computer restarts.
 
 services:
   db:
     image: pgvector/pgvector:0.8.7-pg16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-bharat}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
@@ -21,6 +23,7 @@ services:
 
   ollama:
     image: ollama/ollama:0.40.17
+    restart: unless-stopped
     environment:
       # Less memory per loaded model, so qwen3:14b and bge-m3 fit side by side on a laptop.
       OLLAMA_FLASH_ATTENTION: "1"
@@ -38,6 +41,7 @@ services:
 
   mcp-runner:
     build: ./mcp-runner
+    restart: unless-stopped
     networks: [tools]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8100), 2)"]
@@ -47,6 +51,7 @@ services:
 
   api:
     build: ./api
+    restart: unless-stopped
     env_file: .env
     environment:
       POSTGRES_HOST: db
@@ -73,6 +78,7 @@ services:
 
   web:
     build: ./web
+    restart: unless-stopped
     networks: [frontend]
     ports:
       - "127.0.0.1:3000:80"

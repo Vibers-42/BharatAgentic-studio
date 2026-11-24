@@ -98,10 +98,13 @@ def _use_tools(ctx: RunContext, node: Node, relevant: list[Chunk]) -> Iterator[d
         ctx.warnings.append(f"Tool {unavailable['node_id']} is unavailable: {unavailable['error']}")
     if not any(t.get("tool") for t in offered):
         return []
-    plan_text = yield from _generate(ctx, node, planner.PLANNER_SYSTEM,
-                                     planner.plan_prompt(ctx.question, offered, [c.content for c in relevant]),
-                                     "tool_plan", stream_text=False)
-    calls, problem = planner.parse(plan_text, offered)
+    prompt_text = planner.plan_prompt(ctx.question, offered, [c.content for c in relevant])
+    # Models sometimes reply without a readable plan (a reasoning model may return no text at all); ask once more.
+    for attempt in range(planner.PLAN_ATTEMPTS):
+        plan_text = yield from _generate(ctx, node, planner.PLANNER_SYSTEM, prompt_text, "tool_plan", stream_text=False)
+        calls, problem = planner.parse(plan_text, offered)
+        if not planner.unreadable(problem):
+            break
     if problem:
         ctx.warnings.append(problem)
     connected = {n.id: n for n in ctx.tools}

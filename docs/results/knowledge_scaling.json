@@ -1,0 +1,112 @@
+{
+    "database": "bench_scale_189",
+    "sizes": [
+        {
+            "chunks_in_agent": 100,
+            "rows_in_table": 202,
+            "insert_s": 0.27,
+            "table_and_indexes_mb": 2.8,
+            "search_one_source_ms": {
+                "median": 0.36,
+                "p95": 0.59,
+                "n": 30
+            },
+            "search_ten_sources_ms": {
+                "median": 0.71,
+                "p95": 0.91,
+                "n": 30
+            },
+            "recall_at_1": "30/30",
+            "isolation_leaks": 0,
+            "plan": [
+                "CTE Scan",
+                "Index Scan using chunks_scope_source_idx",
+                "Limit",
+                "Sort"
+            ],
+            "plan_execution_ms": 0.24
+        },
+        {
+            "chunks_in_agent": 1000,
+            "rows_in_table": 2002,
+            "insert_s": 5.24,
+            "table_and_indexes_mb": 29.4,
+            "search_one_source_ms": {
+                "median": 0.96,
+                "p95": 1.48,
+                "n": 30
+            },
+            "search_ten_sources_ms": {
+                "median": 4.32,
+                "p95": 5.04,
+                "n": 30
+            },
+            "recall_at_1": "30/30",
+            "isolation_leaks": 0,
+            "plan": [
+                "Bitmap Heap Scan",
+                "Bitmap Index Scan using chunks_scope_source_idx",
+                "CTE Scan",
+                "Limit",
+                "Sort"
+            ],
+            "plan_execution_ms": 1.91
+        },
+        {
+            "chunks_in_agent": 5000,
+            "rows_in_table": 10002,
+            "insert_s": 41.45,
+            "table_and_indexes_mb": 149.2,
+            "search_one_source_ms": {
+                "median": 2.86,
+                "p95": 3.37,
+                "n": 30
+            },
+            "search_ten_sources_ms": {
+                "median": 22.11,
+                "p95": 31.63,
+                "n": 30
+            },
+            "recall_at_1": "30/30",
+            "isolation_leaks": 0,
+            "plan": [
+                "CTE Scan",
+                "Limit",
+                "Seq Scan",
+                "Sort"
+            ],
+            "plan_execution_ms": 12.55
+        },
+        {
+            "chunks_in_agent": 10000,
+            "rows_in_table": 20002,
+            "insert_s": 110.15,
+            "table_and_indexes_mb": 402.5,
+            "search_one_source_ms": {
+                "median": 4.82,
+                "p95": 5.33,
+                "n": 30
+            },
+            "search_ten_sources_ms": {
+                "median": 41.9,
+                "p95": 44.43,
+                "n": 30
+            },
+            "recall_at_1": "30/30",
+            "isolation_leaks": 0,
+            "plan": [
+                "CTE Scan",
+                "Limit",
+                "Seq Scan",
+                "Sort"
+            ],
+            "plan_execution_ms": 25.51
+        }
+    ],
+    "bge_m3": {
+        "texts": 32,
+        "seconds": 5.27,
+        "chunks_per_second": 6.1,
+        "estimated_minutes_for_10000_chunks": 27.5
+    }
+}

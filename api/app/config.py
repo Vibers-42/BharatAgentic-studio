@@ -34,6 +34,9 @@ class Settings:
     groq_base_url: str = os.getenv("GROQ_BASE_URL", "https://api.groq.com")
     ollama_chat_model: str = os.getenv("OLLAMA_CHAT_MODEL", "qwen3:14b")
     ollama_backup_model: str = os.getenv("OLLAMA_BACKUP_MODEL", "qwen2.5:3b")
+    # Most tokens a local model may write for one reply. A small model can fall into a repetition loop;
+    # without a cap one question once ran for 11 minutes (40,960 tokens).
+    ollama_num_predict: int = int(os.getenv("OLLAMA_NUM_PREDICT", "1536"))
     # Privacy: true means no question or document text is ever sent to a cloud LLM API, for anyone.
     local_only: bool = os.getenv("LOCAL_ONLY", "false").lower() in ("1", "true", "yes")
     ollama_embed_model: str = os.getenv("OLLAMA_EMBED_MODEL", "bge-m3")

@@ -10,7 +10,7 @@ BATCH = 16
 
 
 class EmbeddingError(RuntimeError):
-    pass
+    code = "embedding_unavailable"  # the pipeline's error event carries this code (Ollama down, model missing)
 
 
 def embed(texts: list[str]) -> list[list[float]]:

@@ -27,6 +27,13 @@ class Chunk:
     origin: str | None = None  # URL of the GitHub file or web page, if any
 
 
+def _lock_source(conn, scope: str, source_id: str) -> None:
+    """Writers of one source (in one scope) take turns. Without this, two ingestions of the same source at
+    the same time both delete "the old chunks" before either commits, and both inserts survive (duplicates).
+    The lock is released when the transaction ends."""
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"{scope}|{source_id}",))
+
+
 def replace_source(source_id: str, source_type: str, file_name: str, chunks: list[tuple],
                    vectors: list[list[float]], scope: str = INLINE) -> int:
     """Delete the source's old chunks in this scope and insert the new ones in one transaction.
@@ -38,6 +45,7 @@ def replace_source(source_id: str, source_type: str, file_name: str, chunks: lis
         origin = chunk[3] if len(chunk) > 3 else None
         rows.append((scope, source_id, source_type, name, i, page, text, origin, np.array(vec, dtype=np.float32)))
     with get_conn() as conn:
+        _lock_source(conn, scope, source_id)
         conn.execute("DELETE FROM chunks WHERE scope = %s AND source_id = %s", (scope, source_id))
         with conn.cursor() as cur:
             cur.executemany(
@@ -105,4 +113,5 @@ def list_sources(scope: str = INLINE) -> list[dict]:
 
 def clear_source(source_id: str, scope: str = INLINE) -> int:
     with get_conn() as conn:
+        _lock_source(conn, scope, source_id)
         return conn.execute("DELETE FROM chunks WHERE scope = %s AND source_id = %s", (scope, source_id)).rowcount

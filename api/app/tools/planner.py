@@ -8,6 +8,12 @@ import re
 from .runner import ToolCall
 
 MAX_CALLS = 3
+PLAN_ATTEMPTS = 2  # one retry when the model's reply holds no readable plan
+UNREADABLE = ("The model did not return a tool plan.", "The model's tool plan was not valid JSON.")
+
+
+def unreadable(problem: str | None) -> bool:
+    return problem in UNREADABLE
 
 PLANNER_SYSTEM = (
     "You decide whether tools are needed to answer a question. Reply with JSON only, no other text:\n"

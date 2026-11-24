@@ -37,7 +37,7 @@ def stream(system: str, prompt: str, model: str | None = None) -> Iterator[dict]
         "model": model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         "stream": True,
-        "options": {"temperature": 0.2},
+        "options": {"temperature": 0.2, "num_predict": settings.ollama_num_predict},
     }
     if model.startswith(THINKING_MODELS):
         body["think"] = False
