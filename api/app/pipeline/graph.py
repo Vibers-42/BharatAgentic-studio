@@ -10,6 +10,7 @@ TOOL_TYPES = {"tool_calculator", "tool_mcp"}
 NODE_TYPES = set(MAIN_LINE) | SOURCE_TYPES | TOOL_TYPES
 LANGUAGES = {"en", "te", "hi"}
 MODELS = ["gemini", "groq", "local", "local_small"]  # keys of models/generate.py PROVIDERS
+MCP_SERVERS = ["orders-db"]  # names tools/mcp_client.py can reach (the read-only server in mcp-runner)
 
 
 class Node(BaseModel):

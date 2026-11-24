@@ -1,7 +1,7 @@
 """Checks a graph against the pipeline rules and returns every problem at once, each with a clear
 message, so the user can fix the canvas in one go. An empty list means the graph can run."""
 
-from .graph import LANGUAGES, MAIN_LINE, MODELS, NODE_TYPES, SOURCE_TYPES, TOOL_TYPES, Graph
+from .graph import LANGUAGES, MAIN_LINE, MCP_SERVERS, MODELS, NODE_TYPES, SOURCE_TYPES, TOOL_TYPES, Graph
 
 
 def _error(code: str, message: str, node_id: str | None = None) -> dict:
@@ -82,6 +82,11 @@ def validate_graph(graph: Graph) -> list[dict]:
         if mode != "read_only" and n.config.get("allow_write") is not True:
             errors.append(_error("mcp_not_read_only", f"MCP tool '{n.id}' has mode '{mode}'. Set mode to "
                                  "'read_only', or set allow_write: true to enable writes on purpose.", n.id))
+    for n in graph.of_type("tool_mcp"):
+        server = n.config.get("server")
+        if server not in MCP_SERVERS:
+            errors.append(_error("unknown_mcp_server", f"MCP tool '{n.id}' uses server '{server}', which this api "
+                                 f"does not know. Use one of: {', '.join(MCP_SERVERS)}.", n.id))
     lang = main["agent"][0].config.get("language")
     if lang is not None and lang not in LANGUAGES:
         errors.append(_error("bad_language", f"Agent language '{lang}' is not supported. "

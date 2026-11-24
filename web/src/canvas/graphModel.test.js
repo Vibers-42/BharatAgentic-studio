@@ -1,7 +1,7 @@
 // Unit tests for the canvas model: graph JSON round trip, node rules, and SSE event highlighting.
 import { describe, expect, it } from "vitest";
 import {
-  applyEvent, defaultCanvas, edgesWithActivity, errorsByNode, fromGraph, kindOf, newNode, NODE_KINDS, PALETTE,
+  applyEvent, autoLayout, defaultCanvas, edgesWithActivity, errorsByNode, fromGraph, kindOf, newNode, NODE_KINDS, PALETTE,
   summary, toGraph,
 } from "./graphModel.js";
 
@@ -47,6 +47,27 @@ describe("graph JSON", () => {
     expect(nodes.every((n) => Number.isFinite(n.position.x) && Number.isFinite(n.position.y))).toBe(true);
   });
 
+  it("lays the main line top to bottom, sources left and tools right of the Agent", () => {
+    const { nodes } = defaultCanvas();
+    const ys = nodes.map((n) => n.position.y);
+    expect(ys).toEqual([...ys].sort((a, b) => a - b));
+    const src = newNode("pdf", nodes, null);
+    const tool = newNode("calculator", nodes, null);
+    const agent = nodes.find((n) => n.data.type === "agent");
+    expect(src.position.x).toBeLessThan(agent.position.x);
+    expect(tool.position.x).toBeGreaterThan(agent.position.x);
+  });
+
+  it("tidies graphs saved with the old left-to-right layout and routes edges to the Agent's side handles", () => {
+    const old = { nodes: ["input", "guardrails", "router", "agent", "output"].map((t, i) => ({ id: `n${i + 1}`, type: t, config: {}, position: { x: i * 230, y: 220 } }))
+      .concat([{ id: "s1", type: "source_doc", config: {}, position: { x: 500, y: 30 } }, { id: "t1", type: "tool_calculator", config: {}, position: { x: 700, y: 30 } }]),
+    edges: [{ from: "n3", to: "n4" }, { from: "s1", to: "n4" }, { from: "t1", to: "n4" }] };
+    const { nodes, edges } = fromGraph(old);
+    expect(nodes.find((n) => n.id === "n5").position.y).toBeGreaterThan(nodes.find((n) => n.id === "n1").position.y);
+    expect(edges.map((e) => e.targetHandle)).toEqual(["top", "left", "right"]);
+    expect(autoLayout(nodes)).toEqual(nodes);
+  });
+
   it("gives new nodes unique ids", () => {
     const { nodes } = defaultCanvas();
     const a = newNode("pdf", nodes, { x: 0, y: 0 });
@@ -84,6 +105,25 @@ describe("highlighting from real SSE events", () => {
       { type: "error", node_id: "n4", code: "all_providers_failed" },
     ].reduce(applyEvent, {});
     expect(s).toEqual({ n2: "blocked", n3: "skipped", n4: "error" });
+  });
+
+  it("lights tool nodes from tool_call and tool_result, and marks cited tools", () => {
+    const s = [
+      { type: "tool_call", node_id: "tool1", tool: "calculator" },
+    ].reduce(applyEvent, {});
+    expect(s).toEqual({ tool1: "running" });
+    const after = [
+      { type: "tool_result", node_id: "tool1", ok: true, output: "1200 * 80% = 960" },
+      { type: "tool_call", node_id: "tool2", tool: "get_order" },
+      { type: "tool_result", node_id: "tool2", ok: false, error: "MCP server unavailable" },
+    ].reduce(applyEvent, s);
+    expect(after).toEqual({ tool1: "called", tool2: "error" });
+    expect(applyEvent(after, { type: "result", citations: [{ source_id: "tool1" }] }).tool1).toBe("cited");
+  });
+
+  it("marks the line of a cited source", () => {
+    const out = edgesWithActivity([{ id: "c", source: "src1", target: "n4" }], { src1: "cited", n4: "done" });
+    expect(out[0].className).toBe("edge-cited");
   });
 
   it("animates only edges into the running node", () => {

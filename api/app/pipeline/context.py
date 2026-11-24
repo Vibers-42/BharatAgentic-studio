@@ -29,6 +29,9 @@ class RunContext:
     supported: bool = False                 # agent: True only if the answer cites a real chunk
     grounded: bool = False                  # agent: True if the answer came from retrieved chunks
     generation: dict | None = None          # agent: model used, tokens, timing, fallback (None = no model call)
+    generations: list = field(default_factory=list)       # agent: every model call (tool plan, answer)
+    generation_steps: list[str] = field(default_factory=list)
+    tool_calls: list[dict] = field(default_factory=list)  # agent: each tool call with its result or error
     cost: dict | None = None                # agent: estimated cost of this answer
     comparison: list[dict] = field(default_factory=list)  # agent: the same tokens priced on every model
     model_note: str | None = None           # agent: honest note, e.g. small local model in Telugu

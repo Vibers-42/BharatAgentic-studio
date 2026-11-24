@@ -42,6 +42,21 @@ The first runs of `scripts/eval_languages.py` found three pipeline bugs, now fix
   never evicts the chat model.
 - Benchmark (eval/RESULTS.md): qwen3:14b 36/36, Groq gpt-oss-120b 36/36, qwen2.5:3b 21/36.
 
+## Phase 7: tools, source status and the UI redesign
+
+- Calculator (safe syntax-tree evaluator) and a read-only MCP server (`orders-db`: get_order, find_orders,
+  order_totals) in `mcp-runner`, called with the official MCP SDK. Only tools drawn into the agent run; the
+  runner refuses unconnected nodes, unlisted tools and tools without the read-only annotation; validation
+  refuses unknown MCP servers.
+- The chosen model plans tool calls as JSON (same on all four models); results become citable numbered
+  sources; the plan and the answer are added up in the answer's tokens and cost and in one usage row.
+- `tool_call` / `tool_result` events light up tool nodes; `GET /sources?graph_id=N` lets every screen show
+  what a source holds, whoever uploaded it; `GET /tools`; usage filters by model and days.
+- UI: sidebar shell, Builder (vertical layout, drag and drop, inspector, live event log), Chat
+  (conversation, any saved agent or quick chat with tool switches), Knowledge, Usage (filters, charts),
+  Status; dark and light themes; phone to desktop.
+- Verified by `scripts/verify_phase7.ps1` and the browser journeys in `scripts/ui_journeys.py`.
+
 ## Known issues to revisit
 
 - `gemini-2.5-flash` is marked deprecated on Google's pricing page; from 2026-12-01 requests route to

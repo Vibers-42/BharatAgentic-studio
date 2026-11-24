@@ -32,21 +32,44 @@ export function kindOf(type, config = {}) {
 
 const MAIN_IDS = { input: "n1", guardrails: "n2", router: "n3", agent: "n4", output: "n5" };
 
+// Layout: the main line runs top to bottom down the middle; sources sit to the left of the Agent and send
+// into its left handle, tools sit to the right and send into its right handle.
+export const LAYOUT = { mainX: 300, sourceX: 0, toolX: 600, rowGap: 140, sideGap: 115 };
+
+export function mainPosition(type) {
+  return { x: LAYOUT.mainX, y: MAIN_LINE.indexOf(type) * LAYOUT.rowGap };
+}
+
+// Where the n-th source (or tool) goes: a column beside the Agent, centred on it.
+export function sidePosition(group, index, count) {
+  const agentY = mainPosition("agent").y;
+  const top = agentY - ((count - 1) * LAYOUT.sideGap) / 2;
+  return { x: group === "tool" ? LAYOUT.toolX : LAYOUT.sourceX, y: Math.round(top + index * LAYOUT.sideGap) };
+}
+
 function flowNode(id, type, config, position) {
   const kind = kindOf(type, config);
   const main = NODE_KINDS[kind]?.group === "main";
   return { id, type: "pipeline", position, data: { type, config, kind }, deletable: !main };
 }
 
-function flowEdge(from, to) {
-  return { id: `${from}->${to}`, source: from, target: to };
+// Which Agent handle an edge enters: sources on the left, tools on the right, the router from the top.
+export function targetHandle(sourceType) {
+  if (sourceType?.startsWith("source_")) return "left";
+  if (sourceType?.startsWith("tool_")) return "right";
+  return "top";
 }
 
-// The five main blocks in a row, connected, ready to run.
+export function flowEdge(from, to, sourceType, targetType) {
+  const edge = { id: `${from}->${to}`, source: from, target: to };
+  if (targetType === "agent") edge.targetHandle = targetHandle(sourceType);
+  return edge;
+}
+
+// The five main blocks top to bottom, connected, ready to run.
 export function defaultCanvas() {
-  const nodes = MAIN_LINE.map((t, i) =>
-    flowNode(MAIN_IDS[t], t, structuredClone(NODE_KINDS[t].config), { x: 40 + i * 230, y: 220 }));
-  const edges = MAIN_LINE.slice(1).map((t, i) => flowEdge(MAIN_IDS[MAIN_LINE[i]], MAIN_IDS[t]));
+  const nodes = MAIN_LINE.map((t) => flowNode(MAIN_IDS[t], t, structuredClone(NODE_KINDS[t].config), mainPosition(t)));
+  const edges = MAIN_LINE.slice(1).map((t, i) => flowEdge(MAIN_IDS[MAIN_LINE[i]], MAIN_IDS[t], MAIN_LINE[i], t));
   return { nodes, edges };
 }
 
@@ -58,9 +81,32 @@ export function newNodeId(kind, nodes) {
   return `${prefix}${i}`;
 }
 
+// A new block: at the given spot (dropped on the canvas), or in the next free place of its column.
 export function newNode(kind, nodes, position) {
   const spec = NODE_KINDS[kind];
-  return flowNode(newNodeId(kind, nodes), spec.type, structuredClone(spec.config), position);
+  const inColumn = nodes.filter((n) => NODE_KINDS[n.data.kind]?.group === spec.group).length;
+  const at = position || sidePosition(spec.group, inColumn, inColumn + 1);
+  if (!position) at.y = mainPosition("agent").y + (inColumn % 2 ? 1 : -1) * Math.ceil(inColumn / 2) * LAYOUT.sideGap;
+  return flowNode(newNodeId(kind, nodes), spec.type, structuredClone(spec.config), at);
+}
+
+// Tidy every block into the standard layout (main line down the middle, sources left, tools right).
+export function autoLayout(nodes) {
+  const sides = { source: nodes.filter((n) => NODE_KINDS[n.data.kind]?.group === "source"),
+    tool: nodes.filter((n) => NODE_KINDS[n.data.kind]?.group === "tool") };
+  return nodes.map((n) => {
+    const group = NODE_KINDS[n.data.kind]?.group;
+    if (group === "main") return { ...n, position: mainPosition(n.data.type) };
+    const list = sides[group] || [];
+    return { ...n, position: sidePosition(group, list.indexOf(n), list.length) };
+  });
+}
+
+// True when the main line is not laid out top to bottom (e.g. a graph saved with the older left-to-right
+// layout), so it is tidied on load.
+export function needsLayout(nodes) {
+  const ys = MAIN_LINE.map((t) => nodes.find((n) => n.data.type === t)?.position.y);
+  return ys.some((y, i) => y === undefined || (i > 0 && y <= ys[i - 1]));
 }
 
 // React Flow state -> the graph JSON the api understands (positions are kept for saving the layout).
@@ -76,21 +122,21 @@ export function toGraph(nodes, edges) {
   };
 }
 
-// Graph JSON -> React Flow state. Nodes saved without a position get a tidy default spot.
+// Graph JSON -> React Flow state. Graphs saved without positions, or with the old left-to-right layout,
+// are tidied into the standard layout.
 export function fromGraph(graph) {
-  let extra = 0;
-  const nodes = graph.nodes.map((n) => {
-    const mainIndex = MAIN_LINE.indexOf(n.type);
-    const fallback = mainIndex >= 0 ? { x: 40 + mainIndex * 230, y: 220 } : { x: 500 + (extra++ % 3) * 200, y: 30 + Math.floor((extra - 1) / 3) * 110 };
-    return flowNode(n.id, n.type, n.config || {}, n.position || fallback);
-  });
-  const edges = graph.edges.map((e) => flowEdge(e.from, e.to));
+  let nodes = graph.nodes.map((n) => flowNode(n.id, n.type, n.config || {}, n.position || { x: 0, y: 0 }));
+  if (graph.nodes.some((n) => !n.position) || needsLayout(nodes)) nodes = autoLayout(nodes);
+  const typeOf = Object.fromEntries(graph.nodes.map((n) => [n.id, n.type]));
+  const edges = graph.edges.map((e) => flowEdge(e.from, e.to, typeOf[e.from], typeOf[e.to]));
   return { nodes, edges };
 }
 
 // One SSE event -> the next status map { nodeId: status }. Statuses for main blocks come straight from
 // the engine's stage events (running / done / blocked / skipped / error). Source nodes are marked from
 // the agent's own report: "searched" when retrieval looked at them, "cited" when the answer cites them.
+// Tool nodes light up from the agent's tool events: "running" on tool_call, then "called" or "error" on
+// tool_result, and "cited" when the answer cites the tool's result.
 export function applyEvent(statuses, event) {
   const next = { ...statuses };
   if (event.type === "stage") {
@@ -98,6 +144,10 @@ export function applyEvent(statuses, event) {
     if (event.stage === "agent" && event.status === "done" && event.detail) {
       for (const id of event.detail.retrieval?.searched || []) next[id] = "searched";
     }
+  } else if (event.type === "tool_call") {
+    next[event.node_id] = "running";
+  } else if (event.type === "tool_result") {
+    next[event.node_id] = event.ok ? "called" : "error";
   } else if (event.type === "error") {
     next[event.node_id] = "error";
   } else if (event.type === "result") {
@@ -106,13 +156,18 @@ export function applyEvent(statuses, event) {
   return next;
 }
 
-// Edges into a node that is running are animated, so the flow of the question is visible.
+// Edges into the running block are animated, so the flow of the question is visible;
+// edges the run has passed are drawn as "passed", and a source or tool line whose content was cited glows.
 export function edgesWithActivity(edges, statuses) {
-  return edges.map((e) => ({
-    ...e,
-    animated: statuses[e.target] === "running",
-    className: statuses[e.target] && statuses[e.target] !== "running" && statuses[e.source] ? "edge-passed" : undefined,
-  }));
+  return edges.map((e) => {
+    const from = statuses[e.source];
+    const to = statuses[e.target];
+    const live = to === "running";
+    let className;
+    if (from === "cited") className = "edge-cited";
+    else if (!live && to && from) className = "edge-passed";
+    return { ...e, animated: live, className };
+  });
 }
 
 // Backend validation errors -> { nodeId: [messages] } for marking nodes, plus messages with no node.

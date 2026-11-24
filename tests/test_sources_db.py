@@ -109,6 +109,17 @@ def test_same_source_id_in_two_saved_graphs_stays_apart(client, full_graph):
     assert client.get("/sources/s1").json()["chunks"] == 0
 
 
+def test_listing_shows_what_each_node_of_a_saved_graph_holds(client, full_graph):
+    a = save_graph(client, full_graph, "listing")
+    assert client.get(f"/sources?graph_id={a}").json() == {"scope": f"graph:{a}", "sources": []}
+    pdf = {"file": ("refund-policy.pdf", make_pdf(REFUND_POLICY), "application/pdf")}
+    assert client.post(f"/sources/s1/pdf?graph_id={a}", files=pdf).status_code == 201  # an upload made through the API
+    listed = client.get(f"/sources?graph_id={a}").json()["sources"]
+    assert [(x["source_id"], x["file"], x["source_type"]) for x in listed] == [("s1", "refund-policy.pdf", "source_doc")]
+    assert listed[0]["chunks"] >= 1 and listed[0]["file_names"] == ["refund-policy.pdf"] and listed[0]["ingested_at"]
+    assert client.get("/sources?graph_id=999999").status_code == 404
+
+
 def test_upload_to_a_node_the_graph_does_not_have_is_refused(client, full_graph):
     a = save_graph(client, full_graph, "clinic2")
     pdf = {"file": ("x.pdf", make_pdf(REFUND_POLICY), "application/pdf")}

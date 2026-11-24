@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .db import close_db, init_db
-from .routes import graphs, health, models, pipeline, sources, usage, users
+from .routes import graphs, health, models, pipeline, sources, tools, usage, users
 
 
 @asynccontextmanager
@@ -34,3 +34,4 @@ app.include_router(sources.router)
 app.include_router(models.router)
 app.include_router(users.router)
 app.include_router(usage.router)
+app.include_router(tools.router)

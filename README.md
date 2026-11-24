@@ -8,11 +8,27 @@ shows its citations, the model used, and its estimated cost.
 Built for **AI for Bharat**: colleges, clinics and small offices that want an assistant over
 their own files, with control over privacy and spending.
 
+![The builder after a run: the calculator and the PDF were cited](docs/screenshots/builder-run-answer.png)
+
+Five screens, all on real data from the api: **Builder** (draw and run agents), **Chat** (talk to the
+quick-chat sources or any saved agent), **Knowledge** (upload and manage documents), **Usage** (requests,
+tokens and cost per user and model) and **Status** (containers, models, tools). More screenshots, all taken
+from the running app by [scripts/ui_journeys.py](scripts/ui_journeys.py): [docs/screenshots](docs/screenshots).
+A step-by-step demo: [docs/DEMO.md](docs/DEMO.md).
+
 ## Start everything
 
-```bash
-cp .env.example .env      # then fill in your keys and a database password
-docker compose up --build
+Windows with Docker Desktop (PowerShell):
+
+```powershell
+Copy-Item .env.example .env     # then fill in your keys and a database password
+docker compose up -d --build
+```
+
+With an NVIDIA GPU, start with the GPU override instead, so Qwen 3 14B runs partly on the GPU:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 ```
 
 - Web app: http://localhost:3000
@@ -20,19 +36,24 @@ docker compose up --build
 
 Ports are bound to `127.0.0.1`, so the app is only reachable from this computer.
 
-Pull the local models once (first run only, about 3 GB in total):
+Pull the local models once (first run only, about 13 GB in total):
 
-```bash
+```powershell
+docker compose exec ollama ollama pull qwen3:14b
 docker compose exec ollama ollama pull qwen2.5:3b
 docker compose exec ollama ollama pull bge-m3
 ```
+
+Gemini and Groq need `GEMINI_API_KEY` and `GROQ_API_KEY` in `.env`; without them the app still works
+with the two local models (and the Status page says which models are ready).
 
 ## Tests
 
 ```bash
 pip install -r tests/requirements.txt -r api/requirements.txt
-pytest tests                      # config checks; db tests skip without TEST_DATABASE_URL
-cd web && npm test                # canvas model and SSE highlighting (Vitest)
+pytest tests                      # unit tests; db tests skip without TEST_DATABASE_URL
+cd web && npm test                # canvas model, SSE highlighting, formatting (Vitest)
+python scripts/ui_journeys.py     # real browser journeys in headless Edge or Chrome, saves screenshots
 bash scripts/verify_phase1.sh     # checks the running Docker stack end to end (Linux/macOS/Git Bash)
 ```
 
@@ -46,6 +67,7 @@ powershell -ExecutionPolicy Bypass -File scripts\verify_phase4.ps1              
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase5.ps1                  # connectors, isolation, claims
 powershell -ExecutionPolicy Bypass -File scripts\verify_models.ps1                  # 4 models, fallback chain, local-only
 powershell -ExecutionPolicy Bypass -File scripts\verify_phase6.ps1                  # builder, validation, SSE per node, dashboard
+powershell -ExecutionPolicy Bypass -File scripts\verify_phase7.ps1                  # tools, MCP security, source status, UI journeys
 ```
 
 ## Pipeline graph and API
@@ -60,14 +82,20 @@ Node types: `input`, `guardrails`, `router`, `agent`, `output`, `source_repo`, `
 Validation rules (every broken rule is reported, each with its own code and message):
 exactly one of each main block; the main line input → guardrails → router → agent → output has no
 gaps or shortcuts; every source and tool has an edge into the agent and only into the agent;
-`tool_mcp` must be `read_only` unless `allow_write: true`; agent language is `en`, `te` or `hi`.
+`tool_mcp` must be `read_only` unless `allow_write: true`, and its server must be one the api knows
+(`orders-db`); agent language is `en`, `te` or `hi`; agent model is one of the four keys.
 
 | Endpoint | What it does |
 |---|---|
 | `GET /pipeline/default` | The five-block starting graph |
 | `POST /pipeline/validate` | `{valid, errors[]}` for a graph |
 | `POST /pipeline/run` | Runs `{question, language?, graph \| graph_id}` and streams Server-Sent Events; `?stream=false` returns JSON. An invalid graph gets 422 before anything runs |
-| `POST /graphs`, `GET /graphs`, `GET /graphs/{id}` | Save (valid graphs only), list and load pipelines |
+| `POST /graphs`, `PUT /graphs/{id}`, `GET /graphs`, `GET /graphs/{id}` | Save (valid graphs only), update, list and load pipelines |
+| `GET /sources?graph_id=N` | What every source of a saved agent holds (chunks, files, when indexed); without `graph_id`, the quick chat's sources |
+| `POST /sources/{id}/pdf`, `/url`, `/repo`, `DELETE /sources/{id}` | Add content to a source node (add `?graph_id=N` for a saved agent), or clear it |
+| `GET /tools` | The calculator and the read-only tools each MCP server offers (listed live from the mcp-runner) |
+| `GET /models`, `GET /status` | Models with readiness and prices; container health |
+| `GET /usage/totals`, `/by-user`, `/by-model`, `/by-day`, `/recent` | Usage; filters `?user=`, `?model=` (key), `?days=` |
 
 Each stage sends `running` then `done` (or `blocked` / `skipped`), then one `result` event:
 
@@ -77,11 +105,13 @@ data: {"type": "stage", "stage": "router", "node_id": "n3", "status": "done", "m
 ```
 
 While the agent writes, `token` events stream the answer text:
-`{"type": "token", "stage": "agent", "node_id": "n4", "text": "..."}`.
+`{"type": "token", "stage": "agent", "node_id": "n4", "text": "..."}`. When it uses a tool, a
+`tool_call` event (`node_id`, `tool`, `args`) and then a `tool_result` event (`ok`, `output` or `error`,
+`ms`) are sent for the tool's node, so the canvas lights up that node.
 
 ## Answers from your PDFs (Phase 3)
 
-1. Open http://localhost:3000, upload a PDF on the Chat tab (or `POST /sources/{source_id}/pdf`).
+1. Open http://localhost:3000, upload a PDF on the Knowledge page (or `POST /sources/{source_id}/pdf`).
    It is read page by page, split into ~500-character chunks, embedded with **bge-m3** in Ollama,
    and stored in pgvector tagged with the source node id.
 2. Ask a question in English, Telugu or Hindi. The agent searches **only the sources drawn into it**:
@@ -175,26 +205,76 @@ Three connectors, all chunked, embedded with bge-m3 and stored per source node:
   language with the expected source; `python scripts/eval_languages.py` runs them on every model and
   writes [eval/RESULTS.md](eval/RESULTS.md).
 
-## Visual agent builder and usage dashboard (Phase 6)
+## Visual agent builder (Phase 6, redesigned in Phase 7)
 
-Open http://localhost:3000 — the **Builder** tab is a React Flow canvas:
+Open http://localhost:3000. The **Builder** is a React Flow canvas:
 
-- The five fixed blocks (Input, Guardrails, Router, Agent, Output) are always there and cannot be deleted.
-- **Add** a PDF, Docs link, GitHub repo, Calculator or MCP tool from the palette, then **draw a line** from
-  it to the Agent. A source without a line is never searched.
-- Click a node to configure it: the Agent's model (Gemini, Groq GPT-OSS 120B, Qwen 3 14B, Qwen 2.5 3B),
-  answer language and **Local only**; Guardrails checks; a source's PDF upload, docs link or GitHub repo;
-  an MCP tool's server and read-only mode. Tools can be drawn now and run in Phase 7.
-- **Save / Load** keeps the graph and the layout (positions). Documents belong to the saved graph, so
-  save once before adding a source's content.
-- **Validate** and **Run** use the api's own validation; every problem is listed and marked on its node.
-- **Run** streams the real pipeline: each block turns yellow while running and green when done (red if
-  blocked or failed), the edges into the running block move, connected sources turn blue when searched
-  and cited, and the answer card shows citations, model, tokens, cost and time. The canvas graph runs
-  as drawn (unsaved edits included) against its saved graph's documents.
+- The five fixed blocks run top to bottom: Input, Guardrails, Router, Agent, Output. They cannot be deleted.
+- **Drag** a PDF, Docs link, GitHub repo, Calculator or MCP tool from the palette onto the canvas (or click
+  it), then **draw a line** from its handle to the Agent: sources go into the Agent's left side, tools into
+  its right side. The inspector's "Connected to Agent" switch does the same from the keyboard. A source or
+  tool without a line is never used.
+- Click a block to configure it in the **Inspector**: the Agent's model (Gemini, Groq GPT-OSS 120B,
+  Qwen 3 14B, Qwen 2.5 3B), answer language and **Local only**; Guardrails checks; a source's PDF upload
+  (drop zone with upload progress), docs link or GitHub repo; an MCP tool's server, mode and the tools
+  the server really offers.
+- Each source block shows what it holds (chunks and file), read from the api, so an upload made through
+  the Knowledge page, another tab or the API shows up too, after saving and after reloading.
+- **Save / Open / New / Tidy / Validate**: saved agents keep their layout; graphs saved with the older
+  left-to-right layout are tidied when opened. Documents belong to a saved agent, so save once before
+  adding a source's content. Validation problems are listed and marked on their block.
+- **Run** streams the real pipeline from the api's events: each block shows Running, Done, Blocked or
+  Failed; sources turn Searched and then Cited; tools show Running, then their result (Called) and Cited;
+  the lines into the running block move and cited lines glow. The Run tab lists every event with its time,
+  then the answer with citations, tool calls, model, tokens, cost and time.
 
-The **Dashboard** tab shows total requests, tokens and estimated cost, bars per model and per user, a
-requests-per-day chart and the latest answers, for everyone or one user.
+## Tools: calculator and MCP (Phase 7)
+
+Tools only run when they are drawn into the Agent, and only when the router decides the question needs one
+(a calculation with a calculator connected, or an order question with an MCP tool connected).
+
+1. **Plan:** the same model the user chose is asked for a small JSON plan (`{"calls": [{"node_id", "tool",
+   "args"}]}`) listing only the connected tools. This works the same way on all four models. A call to a
+   tool that was not offered is dropped and reported.
+2. **Run:** [runner.py](api/app/tools/runner.py) runs each call, and refuses a node that is not connected,
+   an MCP tool the server did not list, and an MCP tool that is not marked read-only (unless the node has
+   `allow_write: true`). A failing tool is reported as a result (`ok: false`), never a crash.
+3. **Answer:** each result becomes a numbered source the model must cite, next to the document chunks.
+   The claim check verifies the numbers in a sentence against the tool's output.
+4. **Account:** the plan and the answer are both model calls; their tokens, cost and time are added up
+   into the answer and into one usage row.
+
+- **Calculator** ([calculator.py](api/app/tools/calculator.py)): a safe evaluator over Python's syntax
+  tree (no `eval`): `+ - * / // % **`, `round abs min max sqrt`, and everyday forms such as `1,200 x 80%`,
+  `18% of 4500` and `Rs. 300`. Names, attributes, strings, huge powers and division by zero are refused.
+- **MCP tool** (`orders-db`, in the `mcp-runner` container, official MCP Python SDK): `get_order`,
+  `find_orders` and `order_totals` over fictional clinic orders ([orders.json](mcp-runner/orders.json)),
+  all annotated read-only. The api talks to it with the SDK's streamable HTTP client and can reach only
+  the servers it knows; the mcp-runner has no network path to the database.
+
+Example (Qwen 3 14B, local only): "My lab test cost Rs. 1200 and I cancelled before the sample was
+collected. How much will I get back?" plans `calculator("1200 * 80%")`, gets `960`, and answers
+"You will get back 80 percent of the test amount, which is Rs. 960 [1][4]", citing the refund PDF and the
+calculator. "What is the status of order ORD-1002?" calls `get_order` and cites `orders-db.get_order`.
+
+## Chat, Knowledge, Usage and Status
+
+- **Chat:** pick "Quick chat" (the quick-chat sources from the Knowledge page plus the tools you switch on)
+  or any saved agent (it runs as drawn, over its own documents). Choose the model and the language, switch
+  **Local only** on, and ask. Each answer shows the five stages, tool calls, the answer with clickable
+  citation numbers, the model, tokens, cost, time, and the same tokens priced on the other models.
+- **Knowledge:** the quick chat's sources or a saved agent's: upload PDFs (drag and drop, with progress),
+  fetch docs links, download GitHub repos, see chunks, files and when each was indexed, or clear a source
+  (asks first; cannot be undone).
+- **Usage:** requests, tokens, estimated cost and answer time; filters by user, model and period (7 to 90
+  days); requests per day (India time, with a table view), cost and requests per model, requests and
+  tokens per user, and the latest answers.
+- **Status:** health of the containers, which models are ready (and how to set up the others), prices,
+  and the tools the MCP runner offers.
+
+The interface is dark by default with a light theme (switch at the bottom of the sidebar), works from
+phone to desktop width (the sidebar becomes a menu on small screens), uses no web fonts or icon packages,
+and has visible keyboard focus and labelled controls.
 
 ## Containers
 
@@ -203,7 +283,7 @@ requests-per-day chart and the latest answers, for everyone or one user.
 | `web`        | React app (chat, canvas, usage dashboard), served by nginx; forwards `/api` to `api` |
 | `api`        | FastAPI: runs the pipeline, ingests sources, wraps the models, logs usage |
 | `db`         | Postgres with pgvector: graphs, embeddings, users, usage |
-| `mcp-runner` | MCP tool server, on its own network with no route to `db` |
+| `mcp-runner` | MCP tool server (`orders-db`, read-only tools), on its own network with no route to `db` |
 | `ollama`     | Local model and the embedding model |
 
 Networks: `data` (api, db, ollama), `tools` (api, mcp-runner), `frontend` (web, api).
@@ -224,6 +304,11 @@ web/                 React frontend
 
 - Cost is an estimate from a price table, not a bill.
 - A local model has no API fee, but still uses the laptop's electricity and time.
+- A question that uses a tool costs two model calls (the tool plan and the answer). On Qwen 3 14B on this
+  laptop the plan takes about 6-10 s once the model is loaded (about 20-35 s for the first one), so a tool
+  answer takes 15-30 s locally; on Groq it takes 1-3 s.
+- Tools are chosen by simple, explainable router rules (a calculation, or a question about orders); a
+  question phrased differently may not use a tool. The orders data is fictional.
 
 ### Model quality and speed, measured
 

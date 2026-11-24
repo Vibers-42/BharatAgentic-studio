@@ -88,6 +88,21 @@ def source_info(source_id: str, scope: str = INLINE) -> dict:
             "source_type": row[3], "ingested_at": row[4].isoformat() if row[4] else None}
 
 
+def list_sources(scope: str = INLINE) -> list[dict]:
+    """Every source that holds chunks in this scope, with its chunk count and file names (newest first),
+    so the canvas can show what each node holds after a save, a reload or an upload made through the API."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT source_id, max(source_type), count(*), count(DISTINCT file_name),
+                      (array_agg(DISTINCT file_name ORDER BY file_name))[1:20], max(created_at)
+               FROM chunks WHERE scope = %s GROUP BY source_id ORDER BY source_id""",
+            (scope,),
+        ).fetchall()
+    return [{"source_id": r[0], "scope": scope, "source_type": r[1], "chunks": r[2], "files": r[3],
+             "file": r[4][0] if r[4] else None, "file_names": list(r[4] or []),
+             "ingested_at": r[5].isoformat() if r[5] else None} for r in rows]
+
+
 def clear_source(source_id: str, scope: str = INLINE) -> int:
     with get_conn() as conn:
         return conn.execute("DELETE FROM chunks WHERE scope = %s AND source_id = %s", (scope, source_id)).rowcount

@@ -11,6 +11,8 @@ Event shapes:
   code is "all_providers_failed" (with "attempts"), "quota_daily" / "quota_rate", "safety", "model_error",
   or "stage_error"
   {"type": "fallback", "stage": "agent", "from": "gemini", "to": "local", "code": "...", "reason": "..."}
+  {"type": "tool_call", "stage": "agent", "node_id": "t1", "tool": "calculator", "args": {...}}
+  {"type": "tool_result", "stage": "agent", "node_id": "t1", "tool": "...", "ok": true, "output": "...", "ms": 3}
   {"type": "token_reset", "stage": "agent", ...}  (a model failed mid-answer: discard the streamed text)
   {"type": "result", ...output stage fields...}
 """

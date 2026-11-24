@@ -128,6 +128,16 @@ def test_usage_totals_by_user_model_and_day(client):
     assert len(days) == 1 and days[0]["requests"] == 2
 
 
+def test_usage_filters_by_model_and_days(client):
+    only_local = client.get("/usage/totals?user=p4_alice&model=local").json()
+    assert only_local["requests"] == 1 and only_local["cost_usd"] == 0
+    assert client.get("/usage/totals?user=p4_alice&model=groq").json()["requests"] == 0
+    assert client.get("/usage/totals?user=p4_alice&days=1").json()["requests"] == 2
+    assert {r["model"].split(":")[0] for r in client.get("/usage/recent?user=p4_alice&model=gemini").json()} == {"gemini"}
+    assert [u["user"] for u in client.get("/usage/by-user?model=local").json()].count("p4_alice") == 1
+    assert client.get("/usage/totals?model=DROP%20TABLE").status_code == 422
+
+
 def test_models_endpoint_lists_all_four(client):
     body = client.get("/models").json()
     keys = {m["key"]: m for m in body["models"]}

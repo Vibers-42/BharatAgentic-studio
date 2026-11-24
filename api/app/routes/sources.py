@@ -1,5 +1,5 @@
 """Source endpoints: add content to a source node (a PDF upload, a docs URL or a GitHub repo), see what a
-source holds, or clear it. ?graph_id=N stores the chunks for that saved graph only (the node must exist
+source holds (or list every source of a graph), or clear it. ?graph_id=N stores the chunks for that saved graph only (the node must exist
 there with the right type); without it they go to the "inline" scope used by graphs sent with a question.
 Uploaded files are saved in the uploads Docker volume, one folder per scope and source id."""
 
@@ -104,6 +104,16 @@ def add_repo(source_id: str, req: LinkRequest, graph_id: int | None = None):
     if not url:
         raise HTTPException(400, "Send the repository as {\"url\": \"https://github.com/owner/repo\"}.")
     return _run(ingest_repo, source_id, url, scope)
+
+
+@router.get("")
+def list_sources(graph_id: int | None = None):
+    """What every source holds: in a saved graph's documents with ?graph_id=N, else in the inline scope."""
+    scope = store.INLINE
+    if graph_id is not None:
+        load_graph(graph_id)  # 404 if the graph does not exist
+        scope = store.graph_scope(graph_id)
+    return {"scope": scope, "sources": store.list_sources(scope)}
 
 
 @router.get("/{source_id}")

@@ -33,6 +33,7 @@ def run(ctx: RunContext, node: Node) -> dict:
         "sources": [n.id for n in ctx.sources],
         "tools": [n.id for n in ctx.tools],
         "citations": ctx.citations,
+        "tool_calls": ctx.tool_calls,  # each tool call: node_id, tool, args, ok, output or error, ms
         "claims": ctx.claims,         # one verdict per sentence: supported / unsupported / uncited
         "supported": ctx.supported,   # True only when the shown answer cites real chunks
         "grounded": ctx.grounded,     # False for direct answers that did not use any source

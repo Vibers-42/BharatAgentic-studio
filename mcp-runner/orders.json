@@ -1,0 +1,11 @@
+{
+  "about": "Fictional sample orders of the Sri Lakshmi Community Clinic pharmacy and lab, made for this project. No real people.",
+  "orders": [
+    {"order_id": "ORD-1001", "patient": "Patient A-12", "date": "2026-11-02", "items": ["Paracetamol 500 mg strip", "ORS sachets x5"], "amount": 180, "payment": "UPI", "status": "paid"},
+    {"order_id": "ORD-1002", "patient": "Patient B-07", "date": "2026-11-05", "items": ["Lipid profile test"], "amount": 1200, "payment": "card", "status": "cancelled before sample collection", "refund": 960, "refund_status": "approved"},
+    {"order_id": "ORD-1003", "patient": "Patient C-33", "date": "2026-11-09", "items": ["Consultation"], "amount": 300, "payment": "cash", "status": "cancelled 3 hours before appointment", "refund": 300, "refund_status": "paid at front desk"},
+    {"order_id": "ORD-1004", "patient": "Patient A-12", "date": "2026-11-14", "items": ["Thyroid profile test"], "amount": 850, "payment": "UPI", "status": "sample collected", "refund": 0, "refund_status": "not eligible"},
+    {"order_id": "ORD-1005", "patient": "Patient D-48", "date": "2026-11-18", "items": ["Insulin pen (refrigerated)"], "amount": 640, "payment": "card", "status": "returned opened", "refund": 0, "refund_status": "rejected: refrigerated medicine"},
+    {"order_id": "ORD-1006", "patient": "Patient E-02", "date": "2026-11-20", "items": ["Vitamin D3 capsules (unopened)"], "amount": 420, "payment": "UPI", "status": "returned unopened within 7 days", "refund": 420, "refund_status": "pending manager approval"}
+  ]
+}

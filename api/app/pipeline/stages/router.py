@@ -16,9 +16,20 @@ GREETINGS = {"hi", "hello", "hey", "namaste", "namaskar", "thanks", "thank you",
 WORD = re.compile(r"[\wऀ-౿]+")
 
 
+# "My lab test cost Rs. 1200 ... how much will I get back?": a number plus a how-much / total question.
+AMOUNT_QUESTION = ("how much", "how many rupees", "what amount", "get back", "total", "కి ఎంత", "कितना", "कितने")
+ORDER_WORDS = re.compile(r"\bord-\d+|\border(s)?\b|ఆర్డర్|ऑर्डर", re.I)
+
+
 def looks_like_math(question: str) -> bool:
     text = question.lower()
-    return bool(ARITHMETIC.search(text)) or bool(set(WORD.findall(text)) & MATH_WORDS)
+    if ARITHMETIC.search(text) or set(WORD.findall(text)) & MATH_WORDS:
+        return True
+    return bool(re.search(r"\d", text)) and any(p in text for p in AMOUNT_QUESTION)
+
+
+def mentions_orders(question: str) -> bool:
+    return bool(ORDER_WORDS.search(question))
 
 
 def is_greeting(question: str) -> bool:
@@ -29,11 +40,15 @@ def run(ctx: RunContext, node: Node, graph: Graph, agent: Node) -> dict:
     connected = graph.connected_to(agent.id)
     sources = [n.id for n in connected if n.type in SOURCE_TYPES]
     tools = [n.id for n in connected if n.type in TOOL_TYPES]
+    calculator = any(n.type == "tool_calculator" for n in connected)
+    mcp = any(n.type == "tool_mcp" for n in connected)
 
     if is_greeting(ctx.question):
         ctx.route, why = "direct", "greeting or thanks"
-    elif tools and looks_like_math(ctx.question):
-        ctx.route, why = "tool", "the question needs a calculation and a tool is connected"
+    elif calculator and looks_like_math(ctx.question):
+        ctx.route, why = "tool", "the question needs a calculation and a calculator is connected"
+    elif mcp and mentions_orders(ctx.question):
+        ctx.route, why = "tool", "the question is about orders and an MCP tool is connected"
     elif sources:
         ctx.route, why = "search", "sources are connected to the agent"
     else:

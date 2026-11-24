@@ -1,74 +1,153 @@
-// The visual agent builder. Draw the pipeline (the five fixed blocks plus sources and tools), connect a
-// source to the Agent by drawing a line, configure nodes, save/load graphs, and run a question. Everything
-// is checked and executed by the api (POST /pipeline/validate, /pipeline/run); nodes light up from the
-// api's own Server-Sent Events as they arrive. Nothing here simulates a run.
-import { useCallback, useEffect, useMemo, useState } from "react";
+// The visual agent builder. Drag sources and tools onto the canvas (or click to add), connect them to the
+// Agent by drawing a line, configure blocks, save/load agents, and run a question. Everything is checked
+// and executed by the api (POST /pipeline/validate, /pipeline/run); blocks light up from the api's own
+// Server-Sent Events as they arrive. Nothing here simulates a run.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  addEdge, Background, Controls, MiniMap, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState,
+  addEdge, Background, Controls, MiniMap, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState, useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import AnswerCard from "../AnswerCard.jsx";
+import { api } from "../api.js";
+import Icon from "../Icon.jsx";
 import { runPipeline } from "../sse.js";
 import ConfigPanel from "./ConfigPanel.jsx";
 import {
-  applyEvent, defaultCanvas, edgesWithActivity, errorsByNode, fromGraph, newNode, NODE_KINDS, PALETTE, toGraph,
+  applyEvent, autoLayout, defaultCanvas, edgesWithActivity, errorsByNode, fromGraph, newNode, NODE_KINDS, PALETTE, targetHandle, toGraph,
 } from "./graphModel.js";
 import PipelineNode from "./PipelineNode.jsx";
+import RunConsole from "./RunConsole.jsx";
 
 const nodeTypes = { pipeline: PipelineNode };
-
-async function postJson(url, body, method = "POST") {
-  const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, data };
-}
+const DRAG_TYPE = "application/x-bharat-node";
+const NO_ERRORS = { byNode: {}, general: [] };
+const PALETTE_HINT = {
+  pdf: "Upload a PDF", url: "Fetch a docs page", repo: "Index a GitHub repository",
+  calculator: "Exact arithmetic", mcp: "Read-only orders lookup",
+};
 
 function BuilderInner({ user }) {
   const start = useMemo(() => defaultCanvas(), []);
+  const flow = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState(start.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(start.edges);
   const [selectedId, setSelectedId] = useState(null);
   const [graphId, setGraphId] = useState(null);
   const [name, setName] = useState("My agent");
+  const [savedJson, setSavedJson] = useState(null);
   const [saved, setSaved] = useState([]);
   const [models, setModels] = useState([]);
-  const [errors, setErrors] = useState({ byNode: {}, general: [] });
-  const [message, setMessage] = useState("");
+  const [tools, setTools] = useState(null);
+  const [sources, setSources] = useState({});
+  const [errors, setErrors] = useState(NO_ERRORS);
+  const [toast, setToast] = useState(null);
   const [statuses, setStatuses] = useState({});
+  const [toolActivity, setToolActivity] = useState({});
   const [question, setQuestion] = useState("");
   const [streamed, setStreamed] = useState("");
   const [result, setResult] = useState(null);
-  const [notices, setNotices] = useState([]);
+  const [log, setLog] = useState([]);
+  const [runTools, setRunTools] = useState([]);
   const [runError, setRunError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [panel, setPanel] = useState("inspect");
+  const questionRef = useRef(null);
+  const canvasRef = useRef(null);
+
+  // Fit the drawing to the canvas whenever the canvas gets a new size: when the builder is first shown
+  // (it starts hidden if the app opens on another screen), when the window is resized, or on rotation.
+  useEffect(() => {
+    if (!canvasRef.current) return undefined;
+    let last = { w: 0, h: 0 };
+    const ro = new ResizeObserver(([e]) => {
+      const { width: w, height: h } = e.contentRect;
+      if (w > 0 && h > 0 && (Math.abs(w - last.w) > 40 || Math.abs(h - last.h) > 40)) {
+        last = { w, h };
+        requestAnimationFrame(() => flow.fitView({ padding: 0.15, maxZoom: 1 }));
+      }
+    });
+    ro.observe(canvasRef.current);
+    return () => ro.disconnect();
+  }, [flow]);
+
+  const say = useCallback((text, tone = "ok") => setToast({ text, tone, id: Date.now() }), []);
+  useEffect(() => {
+    if (!toast) return undefined;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const refreshSaved = useCallback(() => {
-    fetch("/api/graphs").then((r) => r.json()).then(setSaved).catch(() => {});
+    api("/graphs").then(setSaved).catch(() => {});
+  }, []);
+  const refreshSources = useCallback((id) => {
+    if (!id) return setSources({});
+    return api(`/sources?graph_id=${id}`)
+      .then((d) => setSources(Object.fromEntries(d.sources.map((s) => [s.source_id, s]))))
+      .catch(() => setSources({}));
   }, []);
   useEffect(() => {
     refreshSaved();
-    fetch("/api/models").then((r) => r.json()).then((d) => setModels(d.models)).catch(() => {});
+    api("/models").then((d) => setModels(d.models)).catch(() => {});
+    api("/tools").then(setTools).catch(() => setTools({ mcp_servers: [{ name: "orders-db", ok: false, error: "Cannot reach the api.", tools: [] }] }));
   }, [refreshSaved]);
+  useEffect(() => { refreshSources(graphId); }, [graphId, refreshSources]);
 
   const graph = () => toGraph(nodes, edges);
+  const currentJson = JSON.stringify(toGraph(nodes, edges)) + name;
+  const dirty = savedJson !== currentJson;
+  const modelLabel = Object.fromEntries(models.map((m) => [m.key, m.label]));
 
-  // Status and validation marks are layered onto the nodes for display only.
+  // Status, validation marks, source contents and tool results are layered onto the nodes for display only.
   const shownNodes = nodes.map((n) => ({
-    ...n, data: { ...n.data, status: statuses[n.id], invalid: errors.byNode[n.id] },
+    ...n,
+    data: {
+      ...n.data, status: statuses[n.id], invalid: errors.byNode[n.id], source: sources[n.id],
+      graphUnsaved: !graphId, tool: toolActivity[n.id], modelLabel: modelLabel[n.data.config.model],
+    },
   }));
   const shownEdges = edgesWithActivity(edges, statuses);
   const selected = nodes.find((n) => n.id === selectedId) || null;
+  const agentId = nodes.find((n) => n.data.type === "agent")?.id;
+  const agent = nodes.find((n) => n.id === agentId);
 
-  const onConnect = useCallback((c) => setEdges((es) => addEdge({ ...c, id: `${c.source}->${c.target}` }, es)), [setEdges]);
+  // A line into the Agent always enters the side that matches the block (sources left, tools right).
+  const onConnect = useCallback((c) => {
+    const typeOf = (id) => nodes.find((n) => n.id === id)?.data.type;
+    const into = typeOf(c.target) === "agent" ? { targetHandle: targetHandle(typeOf(c.source)) } : {};
+    setEdges((es) => addEdge({ ...c, ...into, id: `${c.source}->${c.target}` }, es));
+  }, [setEdges, nodes]);
 
-  function addNode(kind) {
-    const node = newNode(kind, nodes, { x: 60 + nodes.length * 25, y: 40 + (nodes.length % 4) * 30 });
+  function tidy() {
+    setNodes((ns) => autoLayout(ns));
+    setTimeout(() => flow.fitView({ padding: 0.15, duration: 300 }), 50);
+  }
+
+  // Dropped blocks go where they were dropped; clicked blocks go to the next free place in their column
+  // (sources left of the Agent, tools right of it), and the view is fitted so the new block is visible.
+  function addNode(kind, position) {
+    const node = newNode(kind, nodes, position ? { x: position.x - 100, y: position.y - 30 } : null);
     setNodes((ns) => [...ns, node]);
     setSelectedId(node.id);
+    setPanel("inspect");
+    if (!position) setTimeout(() => flow.fitView({ padding: 0.15, maxZoom: 1, duration: 250 }), 50);
+  }
+
+  function onDrop(e) {
+    e.preventDefault();
+    const kind = e.dataTransfer.getData(DRAG_TYPE);
+    if (!NODE_KINDS[kind]) return;
+    addNode(kind, flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }));
   }
 
   function updateConfig(config) {
     setNodes((ns) => ns.map((n) => (n.id === selectedId ? { ...n, data: { ...n.data, config } } : n)));
+  }
+
+  function setConnected(on) {
+    if (!selectedId || !agentId) return;
+    setEdges((es) => (on
+      ? addEdge({ id: `${selectedId}->${agentId}`, source: selectedId, target: agentId, targetHandle: targetHandle(selected?.data.type) }, es)
+      : es.filter((e) => !(e.source === selectedId && e.target === agentId))));
   }
 
   function removeSelected() {
@@ -77,43 +156,65 @@ function BuilderInner({ user }) {
     setSelectedId(null);
   }
 
-  async function validate() {
-    const { data } = await postJson("/api/pipeline/validate", graph());
-    setErrors(errorsByNode(data.errors || []));
-    return data.valid === true;
+  async function validate(quiet) {
+    try {
+      const data = await api("/pipeline/validate", { method: "POST", body: graph() });
+      setErrors(errorsByNode(data.errors || []));
+      if (!quiet) say(data.valid ? "The agent is valid and ready to run." : `${data.errors.length} problem${data.errors.length > 1 ? "s" : ""} found: see the marked blocks.`, data.valid ? "ok" : "err");
+      return data.valid === true;
+    } catch (err) {
+      say(err.message, "err");
+      return false;
+    }
   }
 
   async function save() {
-    setMessage("");
-    const { ok, status, data } = graphId
-      ? await postJson(`/api/graphs/${graphId}`, { name, graph: graph() }, "PUT")
-      : await postJson("/api/graphs", { name, graph: graph() });
-    if (!ok) {
-      setErrors(errorsByNode(data.detail?.errors || []));
-      setMessage(status === 422 ? "Not saved: fix the errors marked on the canvas." : `Not saved (HTTP ${status}).`);
-      return;
+    try {
+      const data = graphId
+        ? await api(`/graphs/${graphId}`, { method: "PUT", body: { name, graph: graph() } })
+        : await api("/graphs", { method: "POST", body: { name, graph: graph() } });
+      setErrors(NO_ERRORS);
+      setGraphId(data.id);
+      setSavedJson(currentJson);
+      say(graphId ? `Saved “${name}”.` : `Saved as agent #${data.id}. You can now add documents to its sources.`);
+      refreshSaved();
+      refreshSources(data.id);
+    } catch (err) {
+      if (err.status === 422) {
+        setErrors(errorsByNode(err.data?.detail?.errors || []));
+        say("Not saved: fix the problems marked on the canvas.", "err");
+      } else say(`Not saved: ${err.message}`, "err");
     }
-    setErrors({ byNode: {}, general: [] });
-    setGraphId(data.id);
-    setMessage(`Saved as graph ${data.id}.`);
-    refreshSaved();
+  }
+
+  function resetRun() {
+    setStatuses({});
+    setToolActivity({});
+    setResult(null);
+    setStreamed("");
+    setLog([]);
+    setRunTools([]);
+    setRunError("");
   }
 
   async function load(id) {
     if (!id) return;
-    const res = await fetch(`/api/graphs/${id}`);
-    if (!res.ok) return setMessage(`Could not load graph ${id}.`);
-    const g = fromGraph(await res.json());
-    setNodes(g.nodes);
-    setEdges(g.edges);
-    setGraphId(Number(id));
-    setName(saved.find((s) => s.id === Number(id))?.name || `Graph ${id}`);
-    setStatuses({});
-    setErrors({ byNode: {}, general: [] });
-    setResult(null);
-    setStreamed("");
-    setSelectedId(null);
-    setMessage(`Loaded graph ${id}.`);
+    try {
+      const g = fromGraph(await api(`/graphs/${id}`));
+      const label = saved.find((s) => s.id === Number(id))?.name || `Agent ${id}`;
+      setNodes(g.nodes);
+      setEdges(g.edges);
+      setGraphId(Number(id));
+      setName(label);
+      setSavedJson(JSON.stringify(toGraph(g.nodes, g.edges)) + label);
+      setErrors(NO_ERRORS);
+      setSelectedId(null);
+      resetRun();
+      setTimeout(() => flow.fitView({ padding: 0.15, maxZoom: 1, duration: 300 }), 50);
+      say(`Opened “${label}”.`);
+    } catch (err) {
+      say(`Could not open agent ${id}: ${err.message}`, "err");
+    }
   }
 
   function startNew() {
@@ -122,35 +223,40 @@ function BuilderInner({ user }) {
     setEdges(g.edges);
     setGraphId(null);
     setName("My agent");
-    setStatuses({});
-    setErrors({ byNode: {}, general: [] });
-    setResult(null);
-    setMessage("New graph (not saved yet).");
+    setSavedJson(null);
+    setErrors(NO_ERRORS);
+    setSelectedId(null);
+    resetRun();
+    setTimeout(() => flow.fitView({ padding: 0.15, maxZoom: 1, duration: 300 }), 50);
   }
 
   async function run(e) {
-    e.preventDefault();
-    setRunError("");
-    setResult(null);
-    setStreamed("");
-    setNotices([]);
-    setStatuses({});
-    if (!(await validate())) {
-      setRunError("The graph is not valid: fix the errors marked on the canvas, then run again.");
+    e?.preventDefault();
+    if (busy || !question.trim()) return;
+    resetRun();
+    setPanel("run");
+    if (!(await validate(true))) {
+      setRunError("The agent is not valid: fix the problems marked on the canvas, then run again.");
       return;
     }
     setBusy(true);
+    const t0 = performance.now();
     try {
       // The canvas graph runs as drawn; graph_id (if saved) says whose documents may be searched.
       const body = { question, graph: graph(), user, ...(graphId ? { graph_id: graphId } : {}) };
       await runPipeline(body, (ev) => {
+        if (ev.type !== "token") setLog((l) => [...l, { t: performance.now() - t0, ev }]);
         setStatuses((s) => applyEvent(s, ev));
         if (ev.type === "token") setStreamed((t) => t + ev.text);
-        if (ev.type === "token_reset") {
-          setStreamed("");
-          setNotices((n) => [...n, `${ev.model} stopped mid-answer (${ev.code}); its partial text was discarded.`]);
+        if (ev.type === "token_reset") setStreamed("");
+        if (ev.type === "tool_call") {
+          setToolActivity((a) => ({ ...a, [ev.node_id]: { tool: ev.tool, pending: true } }));
+          setRunTools((t) => [...t, { node_id: ev.node_id, tool: ev.tool, args: ev.args, pending: true }]);
         }
-        if (ev.type === "fallback") setNotices((n) => [...n, `${ev.from} failed (${ev.code}); ${ev.to} is answering instead.`]);
+        if (ev.type === "tool_result") {
+          setToolActivity((a) => ({ ...a, [ev.node_id]: ev }));
+          setRunTools((t) => [...t.filter((x) => !(x.pending && x.node_id === ev.node_id)), ev]);
+        }
         if (ev.type === "result") setResult(ev);
         if (ev.type === "error") setRunError(`${ev.stage}: ${ev.message}`);
       });
@@ -161,70 +267,129 @@ function BuilderInner({ user }) {
     }
   }
 
+  function openRun() {
+    setPanel("run");
+    setTimeout(() => questionRef.current?.focus(), 30);
+  }
+
+  const problemCount = errors.general.length + Object.values(errors.byNode).reduce((n, m) => n + m.length, 0);
+  const agentModel = agent ? models.find((m) => m.key === (agent.data.config.model || "gemini")) : null;
+  const agentInfo = agent ? `Runs on ${agentModel?.label || agent.data.config.model}${agent.data.config.local_only ? " · local only" : ""}` : "";
+
   return (
-    <section className="builder">
-      <div className="toolbar card">
-        <input className="graph-name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Graph name" />
-        <button onClick={save}>{graphId ? "Save" : "Save as new"}</button>
-        <button onClick={validate}>Validate</button>
-        <button onClick={startNew}>New</button>
-        <select value="" onChange={(e) => load(e.target.value)} aria-label="Load a saved graph">
-          <option value="">Load saved graph…</option>
-          {saved.map((s) => <option key={s.id} value={s.id}>{s.id}: {s.name}</option>)}
-        </select>
-        <span className="muted">{graphId ? `graph ${graphId}` : "not saved"}</span>
-        {message && <span className="muted">{message}</span>}
+    <section className="builder" aria-label="Agent builder">
+      <header className="builder-bar">
+        <div className="builder-title">
+          <input className="title-input" value={name} onChange={(e) => setName(e.target.value)} aria-label="Agent name" maxLength={80} />
+          <span className={`pill ${graphId ? (dirty ? "warn" : "ok") : "idle"}`}>
+            {graphId ? (dirty ? "Unsaved changes" : `Saved · #${graphId}`) : "Not saved"}
+          </span>
+        </div>
+        <div className="builder-actions">
+          <select className="select-sm" value="" onChange={(e) => load(e.target.value)} aria-label="Open a saved agent">
+            <option value="">Open agent…</option>
+            {saved.map((s) => <option key={s.id} value={s.id}>#{s.id} · {s.name}</option>)}
+          </select>
+          <button className="btn ghost" onClick={startNew} title="Start a new agent"><Icon name="newfile" size={15} /> <span className="hide-sm">New</span></button>
+          <button className="btn ghost" onClick={tidy} title="Tidy the layout"><Icon name="builder" size={15} /> <span className="hide-sm">Tidy</span></button>
+          <button className="btn ghost" onClick={() => validate(false)} title="Check the agent for problems"><Icon name="validate" size={15} /> <span className="hide-sm">Validate</span></button>
+          <button className="btn" onClick={save} disabled={graphId && !dirty}><Icon name="save" size={15} /> {graphId ? "Save" : "Save agent"}</button>
+          <button className="btn primary" onClick={openRun}><Icon name="play" size={14} /> Run</button>
+        </div>
+      </header>
+
+      <div className="builder-body">
+        <aside className="palette" aria-label="Blocks palette">
+          <div className="section-label">Sources</div>
+          {PALETTE.filter((k) => NODE_KINDS[k].group === "source").map((k) => <PaletteItem key={k} kind={k} onAdd={addNode} />)}
+          <div className="section-label">Tools</div>
+          {PALETTE.filter((k) => NODE_KINDS[k].group === "tool").map((k) => <PaletteItem key={k} kind={k} onAdd={addNode} />)}
+          <p className="palette-tip"><Icon name="info" size={14} /><span>Drag a block onto the canvas, then draw a line from its handle to the <b>Agent</b>. Unconnected blocks are never used.</span></p>
+        </aside>
+
+        <div className="canvas-wrap">
+          {problemCount > 0 && (
+            <div className="canvas-banner" role="alert">
+              <Icon name="alert" size={15} />
+              <span><b>{problemCount} problem{problemCount > 1 ? "s" : ""}</b> · {[...errors.general, ...Object.entries(errors.byNode).map(([id, m]) => `${id}: ${m[0]}`)][0]}</span>
+              <button className="btn ghost sm" onClick={() => setErrors(NO_ERRORS)} aria-label="Dismiss problems"><Icon name="x" size={14} /></button>
+            </div>
+          )}
+          <div className="canvas" data-testid="canvas" ref={canvasRef} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }} onDrop={onDrop}>
+            <ReactFlow
+              nodes={shownNodes}
+              edges={shownEdges}
+              nodeTypes={nodeTypes}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onNodeClick={(_, n) => { setSelectedId(n.id); setPanel("inspect"); }}
+              onPaneClick={() => setSelectedId(null)}
+              deleteKeyCode={["Backspace", "Delete"]}
+              defaultEdgeOptions={{ type: "smoothstep" }}
+              fitView
+              fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
+              minZoom={0.3}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background gap={22} size={1.2} />
+              <MiniMap position="top-right" pannable zoomable className="minimap" style={{ width: 150, height: 100 }} nodeColor={(n) => `var(--g-${NODE_KINDS[n.data.kind]?.group || "main"})`} maskColor="var(--minimap-mask)" />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          </div>
+          <div className="legend" aria-label="Status legend">
+            {[["running", "Running"], ["done", "Done"], ["searched", "Searched"], ["cited", "Cited"], ["error", "Failed"]].map(([s, l]) => (
+              <span key={s}><i className={`dot s-${s}`} /> {l}</span>
+            ))}
+          </div>
+        </div>
+
+        <aside className="side-panel" aria-label="Inspector and run">
+          <div className="tabs" role="tablist">
+            <button role="tab" aria-selected={panel === "inspect"} className={panel === "inspect" ? "on" : ""} onClick={() => setPanel("inspect")}>
+              <Icon name="builder" size={14} /> Inspector
+            </button>
+            <button role="tab" aria-selected={panel === "run"} className={panel === "run" ? "on" : ""} onClick={openRun}>
+              <Icon name="play" size={13} /> Run {busy && <span className="spinner" />}
+            </button>
+          </div>
+          <div className="side-panel-body">
+            {panel === "inspect" ? (
+              <ConfigPanel node={selected} models={models} graphId={graphId} tools={tools}
+                sourceInfo={selected ? sources[selected.id] : null}
+                connected={!!selected && edges.some((e) => e.source === selected.id && e.target === agentId)}
+                onConnect={setConnected} onConfig={updateConfig} onDelete={removeSelected} onSave={save}
+                errors={selected ? errors.byNode[selected.id] : null} onChangedSources={() => refreshSources(graphId)} />
+            ) : (
+              <RunConsole question={question} setQuestion={setQuestion} onRun={run} busy={busy} log={log}
+                streamed={streamed} result={result} toolCalls={runTools} runError={runError} agentInfo={agentInfo} inputRef={questionRef} />
+            )}
+          </div>
+        </aside>
       </div>
 
-      <div className="palette card">
-        <strong>Add</strong>
-        {PALETTE.map((k) => (
-          <button key={k} className={`pal pal-${NODE_KINDS[k].group}`} onClick={() => addNode(k)}>+ {NODE_KINDS[k].label}</button>
-        ))}
-        <span className="muted">Draw a line from a source or tool to the Agent to connect it.</span>
-      </div>
-
-      {(errors.general.length > 0 || Object.keys(errors.byNode).length > 0) && (
-        <div className="card validation" role="alert">
-          <strong>Graph problems</strong>
-          <ul>
-            {errors.general.map((m) => <li key={m}>{m}</li>)}
-            {Object.entries(errors.byNode).flatMap(([id, ms]) => ms.map((m) => <li key={id + m}><b>{id}</b>: {m}</li>))}
-          </ul>
+      {toast && (
+        <div key={toast.id} className={`toast ${toast.tone}`} role="status">
+          <Icon name={toast.tone === "err" ? "alert" : "check"} size={15} /> {toast.text}
         </div>
       )}
-
-      <div className="canvas-row">
-        <div className="canvas" data-testid="canvas">
-          <ReactFlow
-            nodes={shownNodes}
-            edges={shownEdges}
-            nodeTypes={nodeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={(_, n) => setSelectedId(n.id)}
-            onPaneClick={() => setSelectedId(null)}
-            deleteKeyCode={["Backspace", "Delete"]}
-            fitView
-          >
-            <Background />
-            <MiniMap pannable zoomable />
-            <Controls />
-          </ReactFlow>
-        </div>
-        <ConfigPanel node={selected} models={models} graphId={graphId} onConfig={updateConfig} onDelete={removeSelected} />
-      </div>
-
-      <form className="ask card" onSubmit={run}>
-        <input value={question} onChange={(e) => setQuestion(e.target.value)} aria-label="Question"
-          placeholder="Ask in English, తెలుగు or हिन्दी, then watch the blocks light up…" />
-        <button disabled={busy || !question.trim()}>{busy ? "Running…" : "Run"}</button>
-      </form>
-      {notices.map((n) => <p key={n} className="notice">{n}</p>)}
-      {runError && <p className="error">{runError}</p>}
-      <AnswerCard streamed={streamed} result={result} busy={busy} />
     </section>
+  );
+}
+
+function PaletteItem({ kind, onAdd }) {
+  const spec = NODE_KINDS[kind];
+  return (
+    <button type="button" className={`palette-item group-${spec.group}`} draggable
+      onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, kind); e.dataTransfer.effectAllowed = "copy"; }}
+      onClick={() => onAdd(kind)} title={`Add ${spec.label} (click, or drag onto the canvas)`}>
+      <span className={`chip-icon group-${spec.group}`}><Icon name={kind} size={16} /></span>
+      <span className="palette-text">
+        <strong>{spec.label}</strong>
+        <span className="muted small">{PALETTE_HINT[kind]}</span>
+      </span>
+      <Icon name="plus" size={14} className="palette-plus" />
+    </button>
   );
 }
 

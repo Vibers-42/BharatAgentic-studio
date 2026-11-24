@@ -37,6 +37,14 @@ def fake_stream(system: str, prompt: str, **kwargs):
     yield {"usage": {"input_tokens": 10, "output_tokens": 2}}
 
 
+FAKE_MCP_TOOLS = [
+    {"name": "get_order", "description": "Look up one order", "input_schema": {"properties": {"order_id": {"type": "string"}}},
+     "read_only": True},
+    {"name": "cancel_order", "description": "Cancel an order", "input_schema": {"properties": {"order_id": {"type": "string"}}},
+     "read_only": False},
+]
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_models: use the real retrieve() and provider stream() functions")
     config.addinivalue_line("markers", "real_usage: resolve the user and log usage in the database")
@@ -58,5 +66,9 @@ def offline_models(monkeypatch, request):
     monkeypatch.setattr(agent, "retrieve", lambda question, source_ids, scope="inline": ([], []))
     from app.rag import claims
     monkeypatch.setattr(claims, "verify", lambda answer, chunks: {"answer": answer, "claims": [], "removed": 0})
+    # No real MCP server in offline tests: the orders-db tools are listed, and calls answer from a stub.
+    from app.tools import mcp_client
+    monkeypatch.setattr(mcp_client, "list_tools", lambda server: FAKE_MCP_TOOLS)
+    monkeypatch.setattr(mcp_client, "call_tool", lambda server, tool, args: '{"found": true, "order_id": "ORD-1002", "refund": 960}')
     for provider in (gemini, groq, ollama):
         monkeypatch.setattr(provider, "stream", fake_stream)
