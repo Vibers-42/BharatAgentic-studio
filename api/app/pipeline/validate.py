@@ -3,6 +3,8 @@ message, so the user can fix the canvas in one go. An empty list means the graph
 
 from .graph import LANGUAGES, MAIN_LINE, MCP_SERVERS, MODELS, NODE_TYPES, SOURCE_TYPES, TOOL_TYPES, Graph
 
+MAX_INSTRUCTIONS = 800  # the agent's role and tone (config "instructions"), shown below the fixed answer rules
+
 
 def _error(code: str, message: str, node_id: str | None = None) -> dict:
     return {"code": code, "message": message, "node_id": node_id}
@@ -91,6 +93,11 @@ def validate_graph(graph: Graph) -> list[dict]:
     if lang is not None and lang not in LANGUAGES:
         errors.append(_error("bad_language", f"Agent language '{lang}' is not supported. "
                              f"Use one of: {', '.join(sorted(LANGUAGES))}.", agent_id))
+
+    instructions = main["agent"][0].config.get("instructions")
+    if instructions is not None and (not isinstance(instructions, str) or len(instructions) > MAX_INSTRUCTIONS):
+        errors.append(_error("bad_instructions", f"Agent instructions must be text of at most {MAX_INSTRUCTIONS} "
+                             "characters.", agent_id))
 
     model = main["agent"][0].config.get("model")
     if model is not None and model not in MODELS:

@@ -24,7 +24,39 @@ def client(monkeypatch):
     monkeypatch.setattr(pipeline, "project_access", lambda user_id, pid: access)
     monkeypatch.setattr(pipeline, "check_sources", lambda graph, pid: [])
     monkeypatch.setattr(pipeline, "_source_map", lambda graph, pid: {n.id: n.id for n in graph.nodes if n.type.startswith("source")})
+    monkeypatch.setattr(pipeline.budgets, "check", lambda pid, conversation_id=None: (None, []))  # no spend limit
     return TestClient(app)
+
+
+def test_spend_limit_refuses_cloud_and_keeps_local_runs_local(client, default_graph, monkeypatch):
+    monkeypatch.setattr(pipeline.budgets, "check", lambda pid, conversation_id=None: ("Spend limit reached: test", []))
+    r = client.post("/pipeline/run?stream=false", json={"question": "hi", "graph": default_graph, "project_id": 1, "model": "groq"})
+    assert r.status_code == 402 and "Spend limit reached" in r.json()["detail"]
+    seen = {}
+    real = pipeline.run_pipeline
+
+    def spy(*args, **kwargs):
+        seen["local_only"] = args[6] if len(args) > 6 else kwargs.get("local_only")
+        return real(*args, **kwargs)
+    monkeypatch.setattr(pipeline, "run_pipeline", spy)
+    r = client.post("/pipeline/run?stream=false", json={"question": "hi", "graph": default_graph, "project_id": 1, "model": "local"})
+    assert r.status_code == 200 and seen["local_only"] is True  # a local model may answer, never a paid fallback
+
+
+def test_budget_warning_is_the_first_event(client, default_graph, monkeypatch):
+    monkeypatch.setattr(pipeline.budgets, "check", lambda pid, conversation_id=None: (None, ["85% of the limit is used"]))
+    events = client.post("/pipeline/run?stream=false", json={"question": "hi", "graph": default_graph, "project_id": 1}).json()["events"]
+    assert events[0] == {"type": "budget", "stage": "input", "node_id": None, "level": "warning", "message": "85% of the limit is used"}
+
+
+def test_approval_decision_endpoint_only_for_the_asker(client):
+    from app.tools import approvals
+    mine = approvals.request(1, "orders-db.cancel_order", {"order_id": "ORD-1003"}, "t2")
+    theirs = approvals.request(2, "orders-db.cancel_order", {"order_id": "ORD-1004"}, "t2")
+    assert client.post(f"/pipeline/approvals/{theirs.id}", json={"approve": True}).status_code == 404
+    r = client.post(f"/pipeline/approvals/{mine.id}", json={"approve": False})
+    assert r.status_code == 200 and r.json()["decision"] == "denied"
+    assert client.post(f"/pipeline/approvals/{mine.id}", json={"approve": True}).status_code == 404
 
 
 def parse_sse(text: str) -> list[dict]:

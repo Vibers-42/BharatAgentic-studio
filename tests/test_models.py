@@ -202,6 +202,7 @@ def test_retry_waits_as_long_as_the_provider_asks(monkeypatch, waits):
 
 
 def test_transient_error_twice_falls_back_to_local(monkeypatch, waits):
+    monkeypatch.setattr(groq, "stream", scripted(ProviderError("no key", code="no_key")))
     fake = scripted(ProviderError("down", code="server_error", retryable=True))
     monkeypatch.setattr(gemini, "stream", fake)
     monkeypatch.setattr(ollama, "stream", scripted("local answer"))
@@ -212,6 +213,7 @@ def test_transient_error_twice_falls_back_to_local(monkeypatch, waits):
 
 
 def test_daily_quota_is_not_retried_and_falls_back(monkeypatch, waits):
+    monkeypatch.setattr(groq, "stream", scripted(ProviderError("no key", code="no_key")))
     fake = scripted(QuotaError("daily", "used up", retry_after=30))
     monkeypatch.setattr(gemini, "stream", fake)
     monkeypatch.setattr(ollama, "stream", scripted("local answer"))
@@ -221,6 +223,7 @@ def test_daily_quota_is_not_retried_and_falls_back(monkeypatch, waits):
 
 
 def test_too_long_retry_after_is_not_waited_for(monkeypatch, waits):
+    monkeypatch.setattr(groq, "stream", scripted(ProviderError("no key", code="no_key")))
     fake = scripted(QuotaError("rate", "wait a minute", retry_after=60))
     monkeypatch.setattr(gemini, "stream", fake)
     monkeypatch.setattr(ollama, "stream", scripted("local answer"))
@@ -239,11 +242,12 @@ def test_partial_answer_is_reset_before_retry(monkeypatch, waits):
 
 def test_safety_refusal_is_not_sent_to_another_model(monkeypatch, waits):
     monkeypatch.setattr(gemini, "stream", scripted(ProviderError("refused", code="safety", fallback=False)))
-    local = scripted("should not be called")
+    local, other_cloud = scripted("should not be called"), scripted("should not be called")
     monkeypatch.setattr(ollama, "stream", local)
+    monkeypatch.setattr(groq, "stream", other_cloud)
     with pytest.raises(ProviderError) as err:
         run_generate()
-    assert err.value.code == "safety" and local.calls == []
+    assert err.value.code == "safety" and local.calls == [] and other_cloud.calls == []
 
 
 def test_main_local_model_falls_back_to_the_small_one(monkeypatch, waits):
@@ -261,18 +265,23 @@ def test_main_local_model_falls_back_to_the_small_one(monkeypatch, waits):
     assert calls == [ollama.settings.ollama_chat_model, ollama.settings.ollama_backup_model]
 
 
-def test_small_local_model_has_nothing_after_it(monkeypatch, waits):
+def test_small_local_model_has_only_the_cloud_models_after_it(monkeypatch, waits):
     monkeypatch.setattr(ollama, "stream", scripted(ProviderError("not pulled", code="model_not_found")))
+    monkeypatch.setattr(groq, "stream", scripted(ProviderError("no key", code="no_key")))
+    monkeypatch.setattr(gemini, "stream", scripted(ProviderError("no key", code="no_key")))
     with pytest.raises(generate.AllProvidersFailed) as err:
         run_generate("local_small")
+    assert [a["model"] for a in err.value.attempts] == ["local_small", "groq", "gemini"]
+    with pytest.raises(generate.AllProvidersFailed) as err:
+        list(generate.stream("local_small", "s", "p", local_only=True))
     assert [a["model"] for a in err.value.attempts] == ["local_small"]
 
 
 @pytest.mark.parametrize("model,chain", [
-    ("gemini", ["gemini", "local", "local_small"]),
-    ("groq", ["groq", "local", "local_small"]),
-    ("local", ["local", "local_small"]),
-    ("local_small", ["local_small"]),
+    ("gemini", ["gemini", "groq", "local", "local_small"]),
+    ("groq", ["groq", "gemini", "local", "local_small"]),
+    ("local", ["local", "local_small", "groq", "gemini"]),
+    ("local_small", ["local_small", "groq", "gemini"]),
 ])
 def test_fallback_chains(model, chain):
     assert generate.chain_for(model) == chain
@@ -297,11 +306,12 @@ def test_local_only_never_calls_a_cloud_provider(monkeypatch, waits):
 
 def test_everything_failing_lists_every_attempt(monkeypatch, waits):
     monkeypatch.setattr(groq, "stream", scripted(ProviderError("down", code="server_error", retryable=True)))
+    monkeypatch.setattr(gemini, "stream", scripted(QuotaError("daily", "used up")))
     monkeypatch.setattr(ollama, "stream", scripted(ProviderError("no ollama", code="network_error", retryable=True)))
     with pytest.raises(generate.AllProvidersFailed) as err:
         run_generate("groq")
     assert [(a["model"], a["try"]) for a in err.value.attempts] == [
-        ("groq", 1), ("groq", 2), ("local", 1), ("local", 2), ("local_small", 1), ("local_small", 2)]
+        ("groq", 1), ("groq", 2), ("gemini", 1), ("local", 1), ("local", 2), ("local_small", 1), ("local_small", 2)]
     assert err.value.code == "all_providers_failed"
 
 
@@ -417,3 +427,22 @@ def test_two_local_models_are_configured():
     assert generate.PROVIDERS["local"].model_id() == ollama.settings.ollama_chat_model
     assert generate.PROVIDERS["local_small"].model_id() == ollama.settings.ollama_backup_model
     assert generate.is_local("local") and generate.is_local("local_small") and not generate.is_local("groq")
+
+
+def test_groq_quota_falls_back_to_gemini_before_any_local_model(monkeypatch, waits):
+    monkeypatch.setattr(groq, "stream", scripted(QuotaError("daily", "free tier used up")))
+    monkeypatch.setattr(gemini, "stream", scripted("gemini answer"))
+    local = scripted("should not be called")
+    monkeypatch.setattr(ollama, "stream", local)
+    events, gen = run_generate("groq")
+    assert gen.model == "gemini" and gen.text == "gemini answer" and local.calls == []
+    assert gen.fallback == {"from": "groq", "to": "gemini", "code": "quota_daily", "reason": "free tier used up"}
+
+    assert any(e.get("fallback", {}).get("to") == "gemini" for e in events)
+
+
+def test_missing_local_model_falls_back_to_the_cloud(monkeypatch, waits):
+    monkeypatch.setattr(ollama, "stream", scripted(ProviderError("not pulled", code="model_not_found")))
+    monkeypatch.setattr(groq, "stream", scripted("groq answer"))
+    _, gen = run_generate("local")
+    assert gen.model == "groq" and [a["model"] for a in gen.attempts] == ["local", "local_small"]

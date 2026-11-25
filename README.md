@@ -22,6 +22,58 @@ builder), **Chat** (private conversations with the project knowledge or a shared
 from the running app by [scripts/ui_journeys.py](scripts/ui_journeys.py): [docs/screenshots](docs/screenshots).
 A step-by-step demo: [docs/DEMO.md](docs/DEMO.md).
 
+## What's new (hackathon build)
+
+BharatAgent Studio is the working prototype of a larger product spec, *Assistant Studio*: a self-hosted platform
+where anyone builds their own agentic assistant from knowledge, tools and rules. This build adds the spec's most
+visible pieces on top of the Phase 1-8 platform, all on **free models** (Groq, Gemini, local Qwen).
+
+| | Feature | What you see |
+|---|---|---|
+| ✨ | **Describe your use case, get a ready agent** | Agents → **Generate**: one sentence in, a validated agent on the canvas in ~2 s (blocks, language, guardrails, role and tone, example questions). It reuses documents already in the project and lists what is still to add. The model only fills in a small design; code compiles it into the graph, so it can never invent a block, a server or a write mode ([designer.py](api/app/pipeline/designer.py)). |
+| 🛡️ | **Approval before risky actions** | An agent may cancel an order only after the person who asked clicks **Approve** on a card in the live answer (exact action and arguments, 2-minute countdown; silence = no). Denied or timed-out actions change nothing and the agent says so ([approvals.py](api/app/tools/approvals.py)). |
+| 💸 | **Spend limits** | Projects → **Spend limits**: a monthly limit and a per-conversation limit in ₹. Warning at 80%, cloud models refused at 100% before any call; local models still answer ([budgets.py](api/app/budgets.py)). |
+| 🔁 | **Demo-proof fallback** | A failing model hands over to the next: Groq ↔ Gemini → local Qwen. The answer says which model you chose, why it failed and which one answered. |
+| 🗣️ | **Telugu and Hindi typed in English letters** | "bharatagent gurinchi cheppu" or "refund kitna milega" get an answer the same way, in English letters; Telugu and Devanagari script still get script. |
+| 🤖 | **Knows what it is** | "What is BharatAgent?" / "who are you" get an answer from the app's own description instead of "I don't know"; it is labelled *Not from your sources*. |
+| ⏹️ | **Stop** | Stop a running answer in Chat and in the builder. |
+| 🎭 | **Role and tone per agent** | An optional instruction on the Agent block ("You help patients of a small clinic…"), always below the fixed citation rules. |
+
+| Generate an agent | Approval card | Spend limit |
+|---|---|---|
+| ![Generated clinic agent](docs/screenshots/new-generate-agent.jpg) | ![Approval card](docs/screenshots/new-approval-card.jpg) | ![Spend limit reached](docs/screenshots/new-spend-limit.jpg) |
+| **Romanized Telugu** | **Hindi agent, cited** | **Denied action** |
+| ![Romanized Telugu answer](docs/screenshots/new-romanized-telugu.jpg) | ![Hindi hostel agent](docs/screenshots/new-hindi-agent-chat.jpg) | ![Denied action](docs/screenshots/new-approval-denied.jpg) |
+
+### One-click demo
+
+With the stack running, this creates a demo account, the project **BharatAgent demo** with three documents, and
+three saved agents (Clinic refund helper in Telugu, College hostel helper in Hindi, Pharmacy front desk with
+approvals). It is safe to run again, so after a broken demo just run it once more. The sign-in details are in
+`.env.demo-account` (git-ignored).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\demo-setup.ps1
+```
+
+Try in Chat (pick the agent first): `lab test cancel chesthe refund enta vastundi?` ·
+`हॉस्टल का गेट कितने बजे बंद होता है?` · `Please cancel order ORD-1001.` (then Approve or Deny).
+
+### Where the prototype stands against the full spec
+
+About 60% of the spec's 48 functional requirements are covered (partly done counted as half).
+
+| Area | Done | Next (planned 48-hour build) |
+|---|---|---|
+| Accounts and access | Email sign-in, workspaces, roles, invitations, project roles | Sign in with GitHub and Google; private GitHub repos through the GitHub sign-in; API tokens, audit log |
+| Building an assistant | Visual canvas, validation, **Generate from a description**, role and tone | Published versions with history and diff; RAG settings panel |
+| Knowledge (RAG) | PDF, Word, Excel, CSV, Markdown, docs links, GitHub repos; cited answers; claim check | Keyword + vector search with reranking; pasted text; background ingestion |
+| Databases | — | Connections with tested, encrypted credentials; who may add or use them; read-only by default, SQL guard, writes behind approval |
+| Tools and MCP | Calculator, orders MCP server, **approval for actions** | Date/time and HTTP tools; add your own MCP server from the UI |
+| Agent behaviour | Fixed pipeline with a rule-based router and a JSON tool plan | Model-driven loop: search → SQL → calculate → answer, over several steps |
+| Cost and safety | Usage and cost in ₹, **spend limits**, **fallback**, local-only mode, guardrails | Turn limits per conversation; rate limits for every request |
+| Evals and operations | Language and model evals as scripts, backups, health page | Evals page in the app; HTTPS setup and metrics (roadmap) |
+
 ## Start everything
 
 Windows with Docker Desktop (PowerShell):
@@ -177,7 +229,7 @@ check, token counts, cost and usage log:
 | `local` | Qwen 3 14B (`qwen3:14b`, about 10 GB) | this computer, Ollama |
 | `local_small` | Qwen 2.5 3B (`qwen2.5:3b`), the backup | this computer, Ollama |
 
-Fallback order: the chosen model, then `local`, then `local_small`.
+Fallback order: the chosen model, then the other cloud model (Groq ↔ Gemini), then `local`, then `local_small`; a local model falls back to the other local one and then to the cloud models, unless Local only is on.
 
 **Running Qwen 3 14B:** pull it once (`docker compose exec ollama ollama pull qwen3:14b`). With an NVIDIA
 GPU, start with `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d` so part of the
@@ -276,8 +328,10 @@ Tools only run when they are drawn into the Agent, and only when the router deci
   `18% of 4500` and `Rs. 300`. Names, attributes, strings, huge powers and division by zero are refused.
 - **MCP tool** (`orders-db`, in the `mcp-runner` container, official MCP Python SDK): `get_order`,
   `find_orders` and `order_totals` over fictional clinic orders ([orders.json](mcp-runner/orders.json)),
-  all annotated read-only. The api talks to it with the SDK's streamable HTTP client and can reach only
-  the servers it knows; the mcp-runner has no network path to the database.
+  annotated read-only, and `cancel_order`, the one tool that changes data: it is offered only when the MCP
+  block has "Allow actions that change data" on, and runs only after the user clicks Approve (see What's new).
+  The api talks to it with the SDK's streamable HTTP client and can reach only the servers it knows; the
+  mcp-runner has no network path to the database. Cancellations live in memory and reset on restart.
 
 Example (Qwen 3 14B, local only): "My lab test cost Rs. 1200 and I cancelled before the sample was
 collected. How much will I get back?" plans `calculator("1200 * 80%")`, gets `960`, and answers

@@ -11,23 +11,27 @@ from .input import detect_language
 LANGUAGE_NAMES = {"en": "English", "te": "Telugu", "hi": "Hindi"}
 
 
-def language_match(answer: str, language: str) -> bool:
-    """Is the answer written in the script of the language it should be in? (English = no Indic script.)"""
+def language_match(answer: str, language: str, roman: bool = False) -> bool:
+    """Is the answer written in the script of the language it should be in? (English, and Telugu or Hindi typed in
+    English letters = no Indic script.)"""
     found = detect_language(MARKER.sub("", answer))
+    if roman:
+        return found is None
     return found == language if language in ("te", "hi") else found is None
 
 
 def run(ctx: RunContext, node: Node) -> dict:
     gen = ctx.generation
     # Small models sometimes answer a Telugu or Hindi question in English: say so on the answer.
-    matches = language_match(ctx.answer, ctx.language) if gen and not ctx.blocked else None
+    matches = language_match(ctx.answer, ctx.language, ctx.roman) if gen and not ctx.blocked else None
     if matches is False:
-        ctx.warnings.append(f"The answer is not written in {LANGUAGE_NAMES[ctx.language]}, the language of the "
+        ctx.warnings.append(f"The answer is not written in {LANGUAGE_NAMES[ctx.language]}{' (English letters)' if ctx.roman else ''}, the language of the "
                             f"question. Small local models often reply in English; try a larger model.")
     return {
         "answer": ctx.block_reason if ctx.blocked else ctx.answer,
         "blocked": ctx.blocked,
         "language": ctx.language,
+        "roman": ctx.roman,           # True: Telugu/Hindi typed in English letters, answered the same way
         "language_match": matches,    # False: the model answered in another language (None: no model answer)
         "route": ctx.route or None,
         "sources": [n.id for n in ctx.sources],

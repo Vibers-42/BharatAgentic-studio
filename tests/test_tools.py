@@ -222,10 +222,11 @@ def real_client(monkeypatch, mcp_server):
 
 
 @pytest.mark.real_models
-def test_real_server_lists_only_read_only_tools(real_client):
+def test_real_server_marks_its_only_write_tool(real_client):
     tools = {t["name"]: t for t in real_client.list_tools("orders-db")}
-    assert {"get_order", "find_orders", "order_totals"} <= set(tools)
-    assert all(t["read_only"] for t in tools.values())
+    assert {"get_order", "find_orders", "order_totals", "cancel_order"} <= set(tools)
+    # cancel_order is the one tool that changes data, so it is not read-only (the api asks for approval first)
+    assert [name for name, t in tools.items() if not t["read_only"]] == ["cancel_order"]
 
 
 @pytest.mark.real_models

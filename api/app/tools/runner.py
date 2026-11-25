@@ -1,7 +1,7 @@
 """Runs the tool calls the agent planned, with the rules that keep tools safe:
 - only a tool node drawn into the agent can run (the planner only sees those, and this checks again);
 - an MCP tool must exist on its allowlisted server and be marked read-only, unless the node explicitly
-  sets allow_write (no write tools exist on the bundled server);
+  sets allow_write; a tool that changes data additionally waits for the user's approval (agent stage);
 - each call has its own result or error, so one failing tool does not stop the answer."""
 
 import time
@@ -43,7 +43,7 @@ def describe(nodes: list[Node]) -> list[dict]:
                 if t["read_only"] or node.config.get("allow_write") is True:
                     if t["name"] == "ping":
                         continue
-                    out.append({"node_id": node.id, "tool": t["name"], "server": server,
+                    out.append({"node_id": node.id, "tool": t["name"], "server": server, "read_only": t["read_only"],
                                 "args": _arg_types(t["input_schema"]), "description": t["description"].split("\n")[0]})
     return out
 

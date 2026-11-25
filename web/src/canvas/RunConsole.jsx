@@ -3,6 +3,7 @@
 // errors), stamped with the time it arrived. Token events are shown as the streaming answer instead.
 import Icon from "../Icon.jsx";
 import AnswerCard from "../AnswerCard.jsx";
+import ApprovalCard from "../ApprovalCard.jsx";
 import { secs } from "../format.js";
 
 const STAGE_LABEL = { input: "Input", guardrails: "Guardrails", router: "Router", agent: "Agent", output: "Output" };
@@ -22,6 +23,9 @@ function describe(ev) {
     case "tool_call": return `${ev.node_id} called ${ev.tool}(${JSON.stringify(ev.args)})`;
     case "tool_result": return ev.ok ? `${ev.node_id} returned ${ev.output.length > 90 ? `${ev.output.slice(0, 90)}…` : ev.output}` : `${ev.node_id} failed: ${ev.error}`;
     case "fallback": return `${ev.from} failed (${ev.code}); ${ev.to} answers instead`;
+    case "approval_required": return `${ev.node_id} waits for your approval to run ${ev.tool}(${JSON.stringify(ev.args)})`;
+    case "approval_result": return `Approval ${ev.decision}`;
+    case "budget": return ev.message;
     case "token_reset": return `${ev.model} stopped mid-answer (${ev.code}); partial text discarded`;
     case "error": return `${ev.stage}: ${ev.message}`;
     case "result": return "Answer ready";
@@ -31,12 +35,13 @@ function describe(ev) {
 
 function tone(ev) {
   if (ev.type === "error" || (ev.type === "tool_result" && !ev.ok) || ev.status === "blocked") return "err";
-  if (ev.type === "fallback" || ev.type === "token_reset" || ev.status === "skipped") return "warn";
+  if (ev.type === "fallback" || ev.type === "token_reset" || ev.status === "skipped" || ev.type === "approval_required" || ev.type === "budget") return "warn";
+  if (ev.type === "approval_result") return ev.decision === "approved" ? "ok" : "err";
   if (ev.status === "running" || ev.type === "tool_call") return "running";
   return "ok";
 }
 
-export default function RunConsole({ question, setQuestion, onRun, busy, log, streamed, result, toolCalls, runError, agentInfo, inputRef }) {
+export default function RunConsole({ question, setQuestion, onRun, busy, log, streamed, result, toolCalls, runError, agentInfo, inputRef, approvals = [], onStop }) {
   return (
     <div className="run-console">
       <form className="run-form" onSubmit={onRun}>
@@ -47,13 +52,17 @@ export default function RunConsole({ question, setQuestion, onRun, busy, log, st
           placeholder="Ask in English, తెలుగు or हिन्दी, then watch the blocks light up…" />
         <div className="run-form-row">
           <span className="muted small">{agentInfo}</span>
-          <button className="btn primary" disabled={busy || !question.trim()}>
-            {busy ? <><span className="spinner" /> Running</> : <><Icon name="play" size={14} /> Run</>}
-          </button>
+          {busy ? (
+            <button type="button" className="btn stop-btn" onClick={onStop}><span className="stop-square" /> Stop</button>
+          ) : (
+            <button className="btn primary" disabled={!question.trim()}><Icon name="play" size={14} /> Run</button>
+          )}
         </div>
       </form>
 
       {runError && <p className="inline-msg err" role="alert"><Icon name="alert" size={14} /> {runError}</p>}
+
+      {approvals.map((a) => <ApprovalCard key={a.ask.approval_id} ask={a.ask} decision={a.decision} />)}
 
       {log.length > 0 && (
         <div className="event-log" aria-label="Run events">
@@ -84,7 +93,8 @@ export default function RunConsole({ question, setQuestion, onRun, busy, log, st
           <div className="suggestions">
             {["What is the refund policy?",
               "My lab test cost Rs. 1200 and I cancelled before the sample was collected. How much will I get back?",
-              "What is the status of order ORD-1002?"].map((q) => (
+              "What is the status of order ORD-1002?",
+              "Please cancel order ORD-1001."].map((q) => (
               <button key={q} type="button" className="suggestion" onClick={() => setQuestion(q)}>{q}</button>
             ))}
           </div>

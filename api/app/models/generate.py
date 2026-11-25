@@ -2,8 +2,8 @@
 in PROVIDERS. Policy, the same for every provider:
   1. try the chosen model;
   2. if it failed for a passing reason (per-minute limit, network, server error) try it once more;
-  3. if it still fails, fall back to the local models: the main one (qwen3:14b), then the small backup
-     (qwen2.5:3b) - unless the content itself was refused;
+  3. if it still fails, fall back to the next model (chain_for): the other cloud model, then the local models
+     (qwen3:14b, then the small qwen2.5:3b) - unless the content itself was refused;
   4. if every model in the chain fails, raise AllProvidersFailed listing every attempt.
 local_only=True (the privacy option) refuses any cloud model and keeps the fallback chain local, so no
 question or document text ever leaves this computer for an LLM API.
@@ -19,6 +19,7 @@ from .base import ProviderError
 PROVIDERS = {"gemini": gemini, "groq": groq, "local": ollama.main, "local_small": ollama.backup}
 LOCAL = "local"                       # main local model, the first fallback
 LOCAL_MODELS = ["local", "local_small"]  # in fallback order; everything else is a cloud API
+CLOUD_MODELS = ["groq", "gemini"]        # in fallback order (Groq's free tier allows far more requests a day)
 # Shown on the answer badge: the small backup model is weaker in Telugu and Hindi (eval/RESULTS.md).
 LANGUAGE_NOTES = {"local_small": "Small local model: Telugu and Hindi answers are often wrong or in English "
                                  "(see eval/RESULTS.md)."}
@@ -36,12 +37,17 @@ def is_local(model: str) -> bool:
 
 
 def chain_for(model: str, local_only: bool = False) -> list[str]:
-    """The models to try, in order: the chosen one, then the local models after it."""
+    """The models to try, in order. Local-only: the chosen local model and the local ones after it. Otherwise
+    every model gets a turn, so one free quota running out or one service being down never ends a demo:
+    a cloud model -> the other cloud model -> the local models; a local model -> the other local -> the cloud ones.
+    A model that is not set up (no key, not pulled) fails in milliseconds and the next one is tried."""
     if local_only and not is_local(model):
         raise LocalOnlyError(f"Local-only mode is on, so '{model}' (a cloud API) cannot be used. "
                              f"Choose one of: {', '.join(LOCAL_MODELS)}.")
-    start = LOCAL_MODELS.index(model) + 1 if is_local(model) else 0
-    return [model] + LOCAL_MODELS[start:]
+    if is_local(model):
+        locals_after = LOCAL_MODELS[LOCAL_MODELS.index(model) + 1:]
+        return [model] + locals_after + ([] if local_only else CLOUD_MODELS)
+    return [model] + [m for m in CLOUD_MODELS if m != model] + LOCAL_MODELS
 MAX_TRIES = 2               # first try + one retry, per provider
 BACKOFF_SECONDS = 2.0       # wait before the retry when the provider gives no Retry-After
 MAX_WAIT_SECONDS = 20.0     # a longer requested wait is not waited for; we fall back instead
@@ -118,12 +124,16 @@ def stream(model: str, system: str, prompt: str, local_only: bool = False) -> It
                     continue
                 break  # not worth retrying (or retried already): move on to the next model
             else:
-                yield {"done": _finish(key, provider, model, system, prompt, text, usage, start, attempts, fallback)}
+                # The answer's summary: the model that was chosen, why it failed, and the one that finally answered
+                # (every hop in between is in attempts and was streamed as its own fallback event).
+                summary = {**fallback, "to": key} if fallback else None
+                yield {"done": _finish(key, provider, model, system, prompt, text, usage, start, attempts, summary)}
                 return
         if position + 1 < len(chain):
             last = attempts[-1]
-            fallback = {"from": key, "to": chain[position + 1], "code": last["code"], "reason": last["message"]}
-            yield {"fallback": fallback}
+            hop = {"from": key, "to": chain[position + 1], "code": last["code"], "reason": last["message"]}
+            fallback = fallback or hop
+            yield {"fallback": hop}
     raise AllProvidersFailed(attempts)
 
 

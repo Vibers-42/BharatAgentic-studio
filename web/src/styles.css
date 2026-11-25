@@ -675,3 +675,38 @@ details.note ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-2); }
   .card-grid.two { grid-template-columns: 1fr; }
   .source-detail { padding-left: 6px; }
 }
+
+/* Generate an agent from a description (canvas/DesignDialog.jsx) */
+.btn.accent-soft { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
+.btn.accent-soft:hover:not(:disabled) { border-color: var(--accent); }
+.design-examples { display: flex; flex-direction: column; gap: 6px; }
+.design-examples .suggestion { border-radius: 10px; line-height: 1.4; }
+.design-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; color: var(--text-2); font-size: 13px; }
+.design-steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.design-steps li.done { list-style: none; margin-left: -18px; color: var(--ok); display: flex; align-items: center; gap: 6px; }
+.linkish { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-align: left; text-decoration: underline; text-underline-offset: 2px; }
+.linkish:hover { color: var(--text); }
+
+/* Approval before a tool that changes data (ApprovalCard.jsx) */
+.approval { border: 1px solid var(--warn, #e0a030); background: color-mix(in srgb, var(--warn, #e0a030) 10%, var(--panel-2)); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.approval-head { display: flex; align-items: center; gap: 8px; }
+.approval-head .push { margin-left: auto; }
+.approval p { margin: 0; font-size: 13.5px; }
+.approval-args { margin: 0; padding: 8px 10px; background: var(--panel-3); border-radius: 8px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.approval.done { flex-direction: row; align-items: center; gap: 8px; padding: 8px 12px; font-size: 13px; }
+.approval.done.ok { border-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
+.approval.done.err { border-color: var(--err); background: var(--err-soft); color: var(--err); }
+
+/* Spend limits (Projects.jsx BudgetCard) */
+.budget-bar { height: 8px; border-radius: 999px; background: var(--panel-3); overflow: hidden; margin: 4px 0 10px; }
+.budget-bar > span { display: block; height: 100%; background: var(--ok); transition: width .3s; }
+.budget-bar.warn > span { background: var(--warn); }
+.budget-bar.err > span { background: var(--err); }
+.budget-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.budget-form .field { flex: 1 1 140px; }
+.budget-form .field-hint { flex-basis: 100%; }
+
+/* Stop button (chat composer and builder run) */
+.btn.stop-btn { border-color: var(--err); color: var(--err); background: var(--err-soft); }
+.btn.stop-btn:hover { background: var(--err); color: #fff; }
+.stop-square { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: currentColor; }

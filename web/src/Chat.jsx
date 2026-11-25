@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import { useConfirm } from "./App.jsx";
+import ApprovalCard from "./ApprovalCard.jsx";
 import AnswerCard from "./AnswerCard.jsx";
 import { STAGES } from "./graph.js";
 import Icon from "./Icon.jsx";
@@ -21,12 +22,19 @@ function Stepper({ stages }) {
   );
 }
 
-// A stored assistant message in the shape AnswerCard shows.
+// The api's "I don't know" sentences (rag/prompt.py DONT_KNOW): a searched question with no supporting source.
+const DONT_KNOW = ["I don't know based on the connected sources.", "కనెక్ట్ చేసిన మూలాల ఆధారంగా నాకు ఈ సమాచారం తెలియదు.",
+  "जुड़े हुए स्रोतों के आधार पर मुझे यह जानकारी नहीं पता।", "Connect chesina sources lo ee samaachaaram naaku teliyadu.",
+  "Jude hue sources ke aadhaar par mujhe yeh jaankari nahi pata."];
+
+// A stored assistant message in the shape AnswerCard shows. A cited answer came from the sources; an "I don't know"
+// came from searching them and finding nothing; anything else (a greeting, the app describing itself) did not use them.
 function asResult(m) {
   const local = (m.model || "").startsWith("local");
+  const cited = (m.citations || []).length > 0;
   return {
     answer: m.content, citations: m.citations || [], tool_calls: m.tool_calls || [], model: m.model, fallback: m.fallback,
-    supported: (m.citations || []).length > 0, grounded: true, blocked: false,
+    supported: cited, grounded: cited || DONT_KNOW.includes((m.content || "").trim()), blocked: false,
     usage: m.input_tokens != null ? { input_tokens: m.input_tokens, output_tokens: m.output_tokens } : null,
     cost: m.model ? { usd: m.cost_usd, inr: m.cost_inr, priced: m.cost_usd != null, api_fee: !local, local_compute_ms: null } : null,
   };
@@ -60,6 +68,11 @@ export default function Chat({ project }) {
     api("/models").then((d) => {
       setModels(d.models);
       if (d.local_only) setLocalOnly(true);
+      // Start on a model that is set up: the local model by default when it is installed, else the first ready one
+      // (Groq, then Gemini), so a fresh install without the local models still answers.
+      const ready = (k) => d.models.some((m) => m.key === k && m.ready);
+      const order = d.local_only || project.local_only ? ["local", "local_small"] : ["local", "groq", "gemini", "local_small"];
+      setModel((cur) => (ready(cur) ? cur : order.find(ready) || cur));
     }).catch(() => {});
     return () => abortRef.current?.abort();
   }, [project.id, loadConvs]);
@@ -94,25 +107,34 @@ export default function Chat({ project }) {
         loadConvs();
       }
     } catch (err) { setError(err.message); return; }
-    const turn = { question: q, stages: {}, streamed: "", result: null, tools: [], notices: [], busy: true, error: "" };
+    const turn = { question: q, stages: {}, streamed: "", result: null, tools: [], notices: [], approvals: [], busy: true, error: "" };
     setLive(turn);
     const patch = (fn) => setLive((t) => (t ? { ...t, ...fn(t) } : t));
     abortRef.current = new AbortController();
+    let refused = false;
     try {
       await runPipeline({ question: q, conversation_id: conv.id, request_id: uuid(), model, language: language || null, local_only: offLocal }, (ev) => {
         if (ev.type === "stage") patch((t) => ({ stages: { ...t.stages, [ev.stage]: ev.status } }));
         if (ev.type === "token") patch((t) => ({ streamed: t.streamed + ev.text }));
-        if (ev.type === "token_reset") patch((t) => ({ streamed: "", notices: [...t.notices, `${ev.model} stopped mid-answer; its partial text was discarded.`] }));
+        if (ev.type === "token_reset") patch((t) => ({ streamed: "", notices: ev.code === "about_fallback" ? t.notices
+          : [...t.notices, `${ev.model} stopped mid-answer; its partial text was discarded.`] }));
+        if (ev.type === "budget") patch((t) => ({ notices: [...t.notices, ev.message] }));
         if (ev.type === "fallback") patch((t) => ({ notices: [...t.notices, `${ev.from} failed (${ev.code}), so ${ev.to} answered instead.`] }));
         if (ev.type === "tool_call") patch((t) => ({ tools: [...t.tools, { node_id: ev.node_id, tool: ev.tool, args: ev.args, pending: true }] }));
         if (ev.type === "tool_result") patch((t) => ({ tools: [...t.tools.filter((x) => !(x.pending && x.node_id === ev.node_id)), ev] }));
+        if (ev.type === "approval_required") patch((t) => ({ approvals: [...t.approvals, { ask: ev, decision: null }] }));
+        if (ev.type === "approval_result") patch((t) => ({ approvals: t.approvals.map((x) => (x.ask.approval_id === ev.approval_id ? { ...x, decision: ev.decision } : x)) }));
         if (ev.type === "result") patch(() => ({ result: ev }));
         if (ev.type === "error") patch(() => ({ error: ev.code === "access_revoked" ? "Your access to this project was removed." : `${ev.code === "all_providers_failed" ? "No model could answer. " : ""}${ev.message}` }));
       }, abortRef.current.signal);
     } catch (err) {
-      if (err.name !== "AbortError") patch(() => ({ error: err.message }));
+      if (err.name === "AbortError") patch((t) => ({ notices: [...t.notices, "Stopped. The answer was not finished."] }));
+      else { patch(() => ({ error: err.message })); refused = true; }
     }
     patch(() => ({ busy: false }));
+    // A question refused before it started (spend limit, validation) is not stored, so keep it on screen with its
+    // reason instead of reloading the conversation over it.
+    if (refused) { loadConvs(); return; }
     try { setActive(await api(`/conversations/${conv.id}`)); setLive(null); loadConvs(); } catch { /* keep the live view */ }
   }
 
@@ -207,6 +229,7 @@ export default function Chat({ project }) {
                     <div className="bot-body">
                       <div className="bot-head"><strong>{agent ? agent.name : "Project knowledge"}</strong><Stepper stages={live.stages} /></div>
                       {live.notices.map((n) => <p key={n} className="note warn"><Icon name="alert" size={13} /> {n}</p>)}
+                      {live.approvals.map((a) => <ApprovalCard key={a.ask.approval_id} ask={a.ask} decision={a.decision} />)}
                       {live.error && <p className="inline-msg err" role="alert"><Icon name="alert" size={14} /> {live.error}</p>}
                       {(!live.error || live.result) && <AnswerCard streamed={live.streamed} result={live.result} busy={live.busy} toolCalls={live.tools} />}
                     </div>
@@ -223,9 +246,15 @@ export default function Chat({ project }) {
           <textarea value={question} onChange={(e) => setQuestion(e.target.value)} rows={1} aria-label="Question"
             placeholder={active ? "Ask a follow-up…" : "Ask in English, తెలుగు or हिन्दी…"}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
-          <button className="btn primary icon-btn" disabled={live?.busy || !question.trim()} aria-label="Send">
-            {live?.busy ? <span className="spinner" /> : <Icon name="send" size={16} />}
+          {live?.busy ? (
+            <button type="button" className="btn icon-btn stop-btn" onClick={() => abortRef.current?.abort()} aria-label="Stop the answer" title="Stop">
+              <span className="stop-square" />
+            </button>
+          ) : (
+          <button className="btn primary icon-btn" disabled={!question.trim()} aria-label="Send">
+            <Icon name="send" size={16} />
           </button>
+          )}
         </form>
         <p className="composer-hint muted small">Enter to send · Shift+Enter for a new line · your conversations are private to you</p>
       </div>

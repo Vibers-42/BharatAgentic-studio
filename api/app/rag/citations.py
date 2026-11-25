@@ -3,7 +3,7 @@ Markers that point at no real chunk are removed, and an answer with no valid cit
 
 import re
 
-from .prompt import DONT_KNOW
+from .prompt import DONT_KNOW, ROMAN_DONT_KNOW
 from .store import Chunk
 
 MARKER = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")  # [2] or [1, 3]
@@ -18,7 +18,7 @@ def normalize_markers(answer: str) -> str:
 
 def is_dont_know(answer: str) -> bool:
     text = " ".join(answer.split()).lower()
-    return any(s.lower().rstrip(".।") in text for s in DONT_KNOW.values())
+    return any(s.lower().rstrip(".।") in text for s in [*DONT_KNOW.values(), *ROMAN_DONT_KNOW.values()])
 
 
 def check(answer: str, chunks: list[Chunk]) -> dict:

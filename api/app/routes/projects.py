@@ -5,7 +5,7 @@ viewer); members see only the projects they are assigned to."""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from .. import knowledge
+from .. import budgets, knowledge
 from ..access import accessible_project_ids, require_org, require_project
 from ..auth import User, current_user
 from ..db import get_conn
@@ -25,6 +25,8 @@ class ProjectUpdate(BaseModel):
     description: str | None = None
     local_only: bool | None = None
     archived: bool | None = None
+    budget_month_inr: float | None = None         # 0 = no limit
+    budget_conversation_inr: float | None = None  # 0 = no limit
 
 
 class MemberRequest(BaseModel):
@@ -45,7 +47,7 @@ def _project_json(a, stats: dict) -> dict:
     return {"id": a.id, "org_id": a.org_id, "org_name": a.org_name, "org_kind": a.org_kind, "name": a.name,
             "description": a.description, "local_only": a.local_only, "archived": a.archived,
             "my_org_role": a.org_role, "my_project_role": a.project_role,
-            "can_contribute": a.can_contribute, "can_manage": a.can_manage, **stats}
+            "can_contribute": a.can_contribute, "can_manage": a.can_manage, "budget": budgets.status(a.id), **stats}
 
 
 @router.get("/projects")
@@ -104,6 +106,12 @@ def update_project(project_id: int, req: ProjectUpdate, user: User = Depends(cur
         fields.append("local_only = %s"); values.append(req.local_only)
     if req.archived is not None:
         fields.append("archived_at = " + ("now()" if req.archived else "NULL"))
+    for name in ("budget_month_inr", "budget_conversation_inr"):
+        value = getattr(req, name)
+        if value is not None:
+            if value < 0 or value > 10_000_000:
+                raise HTTPException(422, "Enter a spend limit in rupees (0 for no limit).")
+            fields.append(f"{name} = %s"); values.append(round(value, 2) if value > 0 else None)
     if fields:
         with get_conn() as conn:
             conn.execute(f"UPDATE projects SET {', '.join(fields)}, updated_at = now() WHERE id = %s", (*values, project_id))

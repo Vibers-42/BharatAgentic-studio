@@ -20,12 +20,15 @@ class RunContext:
     history: list = field(default_factory=list)   # earlier [(role, text)] of this conversation, newest last
     owner: dict = field(default_factory=dict)      # org_id, project_id, graph_id, conversation_id for the usage row
     previous_citations: list = field(default_factory=list)  # what the last answer of this conversation cited
+    can_approve: bool = False              # a live stream is open, so a risky tool can wait for the user's approval
 
     # Filled in by the stages, in order.
     language: str = "en"                    # input: language the answer must be in
+    roman: bool = False                     # input: Telugu/Hindi typed in English letters; answer the same way
     blocked: bool = False                   # guardrails: True stops router and agent
     block_reason: str = ""
     route: str = ""                         # router: "search", "tool" or "direct"
+    about_app: bool = False                 # router: the question is about BharatAgent Studio itself
     sources: list[Node] = field(default_factory=list)  # agent: sources drawn into the agent
     tools: list[Node] = field(default_factory=list)    # agent: tools drawn into the agent
     model_key: str = ""                     # agent: model asked for (gemini / groq / local)

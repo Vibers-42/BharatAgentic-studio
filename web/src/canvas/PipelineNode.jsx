@@ -20,7 +20,10 @@ const KIND_ICON = {
 
 function SourceLine({ data }) {
   const info = data.source;
-  if (!info) return <span className="node-line warn"><Icon name="alert" size={13} /> Choose project knowledge</span>;
+  if (!info) {
+    const wanted = data.config.title;  // set by a generated agent: what this block should hold
+    return <span className="node-line warn" title={wanted}><Icon name="alert" size={13} /> {wanted ? `Add: ${wanted}` : "Choose project knowledge"}</span>;
+  }
   if (info.status !== "ready") return <span className="node-line warn"><Icon name="alert" size={13} /> {info.file}: {info.status}</span>;
   return (
     <span className="node-line ok" title={info.file_names?.join("\n")}>

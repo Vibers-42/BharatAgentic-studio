@@ -43,7 +43,7 @@ function Switch({ checked, onChange, label, hint, disabled }) {
   );
 }
 
-function McpTools({ tools }) {
+function McpTools({ tools, allowWrite }) {
   const server = tools?.mcp_servers?.[0];
   if (!tools) return <div className="skeleton-line" />;
   if (!server?.ok) return <p className="inline-msg err"><Icon name="alert" size={14} /> {server?.error || "MCP runner unavailable"}</p>;
@@ -52,7 +52,7 @@ function McpTools({ tools }) {
       {server.tools.map((t) => (
         <li key={t.name}>
           <span className="mono">{t.name}</span>
-          <span className={`pill ${t.read_only ? "ok" : "warn"}`}>{t.read_only ? "read-only" : "writes · blocked"}</span>
+          <span className={`pill ${t.read_only ? "ok" : "warn"}`}>{t.read_only ? "read-only" : allowWrite ? "changes data · asks you first" : "changes data · off"}</span>
           <span className="muted small">{t.description}</span>
         </li>
       ))}
@@ -111,6 +111,11 @@ export default function ConfigPanel({ node, models, project, sources = [], canEd
               <option value="hi">हिन्दी · Hindi</option>
             </select>
           </Field>
+          <Field label="Role and tone (optional)" hint="Who the agent serves and how it talks. The citation rules always apply on top.">
+            <textarea value={config.instructions || ""} rows={3} maxLength={800} disabled={!canEdit}
+              onChange={(e) => onConfig(e.target.value ? { ...config, instructions: e.target.value } : (({ instructions, ...rest }) => rest)(config))}
+              placeholder="e.g. You help patients of a small clinic. Answer simply and politely." aria-label="Agent role and tone" />
+          </Field>
           <Switch label="Local only" checked={config.local_only === true}
             hint="No cloud AI at all, not even as fallback. Answers come from Qwen on this computer."
             onChange={(on) => onConfig({ ...config, local_only: on,
@@ -144,15 +149,13 @@ export default function ConfigPanel({ node, models, project, sources = [], canEd
               {(tools?.mcp_servers || [{ name: "orders-db" }]).map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
             </select>
           </Field>
-          <Field label="Mode">
-            <select value={config.mode || ""} onChange={(e) => set("mode", e.target.value)} aria-label="MCP mode">
-              <option value="read_only">Read-only</option>
-              <option value="read_write">Read and write (needs allow_write)</option>
-            </select>
-          </Field>
+          <Switch label="Allow actions that change data" checked={config.allow_write === true} disabled={!canEdit}
+            hint="For example cancelling an order. Each action pauses the answer until you click Approve; no answer in 2 minutes means No."
+            onChange={(on) => onConfig(on ? { ...config, mode: "read_write", allow_write: true }
+              : (({ allow_write, ...rest }) => ({ ...rest, mode: "read_only" }))(config))} />
           <div className="stack">
             <span className="field-label">Tools on {config.server || "the server"}</span>
-            <McpTools tools={tools} />
+            <McpTools tools={tools} allowWrite={config.allow_write === true} />
           </div>
         </>
       )}
@@ -176,7 +179,7 @@ export default function ConfigPanel({ node, models, project, sources = [], canEd
 function ProjectSource({ kind, config, project, sources, canEdit, onPick, onChangedSources }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [link, setLink] = useState("");
+  const [link, setLink] = useState(config.url || "");  // a generated agent may already suggest the address
   const fits = sources.filter((s) => (kind === "repo" ? s.kind === "repo" : kind === "url" ? s.kind === "url" : !["url", "repo"].includes(s.kind)));
   const current = sources.find((s) => s.id === config.source_ref);
 

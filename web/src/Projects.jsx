@@ -61,6 +61,46 @@ function CreateProject({ org, onClose, onCreated }) {
   );
 }
 
+// Spend limits (rupees): this month's spend against the project's monthly limit, and the limit per conversation.
+// At 80% answers carry a warning; at 100% new questions to cloud models are refused. Managers change the limits.
+function BudgetCard({ p, onSave }) {
+  const month = p.budget?.month || { limit: null, spent: 0, ratio: null };
+  const [monthly, setMonthly] = useState("");
+  const [perConv, setPerConv] = useState("");
+  const pct = month.ratio == null ? null : Math.min(100, Math.round(month.ratio * 100));
+  const tone = pct == null ? "" : pct >= 100 ? "err" : pct >= 80 ? "warn" : "ok";
+  return (
+    <div className="card">
+      <div className="card-head"><h3>Spend limits</h3>
+        {pct != null && <span className={`pill ${tone} push`}>{pct}% used</span>}</div>
+      <p className="muted small">
+        This month: <b>₹{month.spent.toFixed(2)}</b>{month.limit ? <> of <b>₹{month.limit}</b></> : " (no monthly limit)"}
+        {" · "}per conversation: {p.budget?.conversation_limit ? `₹${p.budget.conversation_limit}` : "no limit"}.
+        {" "}Estimated API fees; local models cost nothing.
+      </p>
+      {pct != null && <div className={`budget-bar ${tone}`} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${pct}%` }} /></div>}
+      {p.can_manage && (
+        <form className="budget-form" onSubmit={(e) => {
+          e.preventDefault();
+          const body = {};
+          if (monthly !== "") body.budget_month_inr = Number(monthly);
+          if (perConv !== "") body.budget_conversation_inr = Number(perConv);
+          if (Object.keys(body).length) onSave(body).then(() => { setMonthly(""); setPerConv(""); });
+        }}>
+          <label className="field"><span className="field-label">Monthly limit (₹)</span>
+            <input type="number" min="0" step="0.01" inputMode="decimal" value={monthly} onChange={(e) => setMonthly(e.target.value)}
+              placeholder={month.limit ? String(month.limit) : "no limit"} /></label>
+          <label className="field"><span className="field-label">Per conversation (₹)</span>
+            <input type="number" min="0" step="0.01" inputMode="decimal" value={perConv} onChange={(e) => setPerConv(e.target.value)}
+              placeholder={p.budget?.conversation_limit ? String(p.budget.conversation_limit) : "no limit"} /></label>
+          <button className="btn" disabled={monthly === "" && perConv === ""}>Save limits</button>
+          <span className="field-hint">0 removes a limit. Warning at 80%, cloud models stop at 100%.</span>
+        </form>
+      )}
+    </div>
+  );
+}
+
 function ProjectDetail({ id, org, reloadProjects }) {
   const [p, setP] = useState(null);
   const [members, setMembers] = useState([]);
@@ -136,6 +176,8 @@ function ProjectDetail({ id, org, reloadProjects }) {
           ) : <p className="muted small">Every company member is on this project, or invite people in Members.</p>
         )}
       </div>
+
+      <BudgetCard p={p} onSave={(body) => act(() => api(`/projects/${id}`, { method: "PATCH", body }))} />
 
       {p.can_manage && (
         <div className="card">

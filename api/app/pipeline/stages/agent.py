@@ -16,7 +16,7 @@ from ...models.generate import LANGUAGE_NOTES, AllProvidersFailed, is_local
 from ...rag import citations, claims, conversation, embeddings, prompt, store
 from ...rag.retrieve import BROAD_MAX, retrieve
 from ...rag.store import Chunk
-from ...tools import planner, runner
+from ...tools import approvals, planner, runner
 from ..context import RunContext
 from ..graph import SOURCE_TYPES, TOOL_TYPES, Graph, Node
 
@@ -92,6 +92,22 @@ def _generate(ctx: RunContext, node: Node, system: str, user: str, step: str, st
     return ctx.generations[-1].text
 
 
+def _ask_approval(ctx: RunContext, call, label: str) -> Iterator[dict]:
+    """Pause before a tool that changes data until the person who asked approves it (or deny when they do not
+    answer in time). Returns "approved", "denied", "timeout", or "unavailable" when nobody can be asked (a run
+    without a live stream, or without a signed-in user)."""
+    if not ctx.can_approve or ctx.user_id is None:
+        return "unavailable"
+    pending = approvals.request(ctx.user_id, label, call.args, call.node_id)
+    yield {"type": "approval_required", "stage": "agent", "node_id": call.node_id, "approval_id": pending.id,
+           "tool": label, "args": call.args, "timeout_s": int(approvals.TIMEOUT_SECONDS),
+           "risk": f"{label} changes data. It runs only if you approve."}
+    decision = approvals.wait(pending)
+    yield {"type": "approval_result", "stage": "agent", "node_id": call.node_id, "approval_id": pending.id,
+           "decision": decision}
+    return decision
+
+
 def _use_tools(ctx: RunContext, node: Node, relevant: list[Chunk]) -> Iterator[dict]:
     """Plan and run tool calls. Yields tool_call / tool_result events (the canvas lights the tool node),
     and returns the results as numbered sources the answer can cite."""
@@ -105,7 +121,9 @@ def _use_tools(ctx: RunContext, node: Node, relevant: list[Chunk]) -> Iterator[d
     for attempt in range(planner.PLAN_ATTEMPTS):
         plan_text = yield from _generate(ctx, node, planner.PLANNER_SYSTEM, prompt_text, "tool_plan", stream_text=False)
         calls, problem = planner.parse(plan_text, offered)
-        if not planner.unreadable(problem):
+        # The router only sends a question here when it clearly needs a tool (a sum, an order id), so an empty
+        # plan is most likely a model slip: ask once more, like an unreadable one.
+        if not planner.unreadable(problem) and calls:
             break
     if problem:
         ctx.warnings.append(problem)
@@ -113,6 +131,22 @@ def _use_tools(ctx: RunContext, node: Node, relevant: list[Chunk]) -> Iterator[d
     as_sources = []
     for call in calls:
         yield {"type": "tool_call", "stage": "agent", "node_id": call.node_id, "tool": call.tool, "args": call.args}
+        spec = next((t for t in offered if t.get("node_id") == call.node_id and t.get("tool") == call.tool), {})
+        if spec.get("read_only") is False:
+            label = f"{connected[call.node_id].config.get('server')}.{call.tool}"
+            decision = yield from _ask_approval(ctx, call, label)
+            if decision != "approved":
+                why = {"denied": "the user denied it", "timeout": "nobody approved it in time",
+                       "unavailable": "approval needs the live chat or builder run"}[decision]
+                result = {"node_id": call.node_id, "tool": call.tool, "args": call.args, "ok": False, "denied": True,
+                          "error": f"Not run: {why}. Nothing was changed.", "ms": 0}
+                ctx.tool_calls.append(result)
+                yield {"type": "tool_result", "stage": "agent", **result}
+                # The model must tell the user the action did not happen, citing this.
+                as_sources.append(Chunk(-(len(as_sources) + 1), call.node_id, f"{label} (tool)", 0, None,
+                                        f"The action {label} with {call.args} was NOT carried out because {why}. "
+                                        "Nothing was changed.", 1.0))
+                continue
         result = runner.run(call, connected)
         ctx.tool_calls.append(result)
         yield {"type": "tool_result", "stage": "agent", **result}
@@ -281,25 +315,44 @@ def run(ctx: RunContext, node: Node, graph: Graph) -> Iterator[dict]:
 
     # Direct answer: nothing to retrieve or compute; no citations, marked as not from your sources.
     if ctx.route == "direct" or (not ctx.sources and not tool_sources):
-        yield from _generate(ctx, node, prompt.direct_system(ctx.language), _with_history(ctx), "answer", stream_text=True)
+        system = (prompt.about_system if ctx.about_app else prompt.direct_system)(ctx.language, node.config.get("instructions"), ctx.roman)
+        yield from _generate(ctx, node, system, _with_history(ctx), "answer", stream_text=True)
         ctx.answer = ctx.generations[-1].text
         ctx.grounded, ctx.supported, ctx.citations = False, False, []
-        return finish(mode="direct", model_called=True)
+        return finish(mode="about" if ctx.about_app else "direct", model_called=True)
+
+    def about_fallback():
+        # Asked about BharatAgent, and the connected sources hold nothing about it: describe the app instead of
+        # "I don't know". Marked as not from the sources (grounded False), like any direct answer.
+        if ctx.answer:
+            yield {"type": "token_reset", "stage": "agent", "node_id": node.id, "model": ctx.model_key,
+                   "code": "about_fallback", "message": "The sources do not answer this; using the app's description."}
+        yield from _generate(ctx, node, prompt.about_system(ctx.language, node.config.get("instructions"), ctx.roman),
+                             _with_history(ctx), "answer", stream_text=True)
+        ctx.answer = ctx.generations[-1].text
+        ctx.grounded, ctx.supported, ctx.citations = False, False, []
+        return finish(mode="about", model_called=True, reason="The connected sources say nothing about BharatAgent "
+                      "Studio, so the app's own description answered.")
+
+    if not evidence and ctx.about_app:
+        return (yield from about_fallback())
 
     ctx.grounded = True
     if not evidence:
-        ctx.answer, ctx.supported, ctx.citations = prompt.DONT_KNOW[ctx.language], False, []
+        ctx.answer, ctx.supported, ctx.citations = prompt.dont_know(ctx.language, ctx.roman), False, []
         return finish(mode="rag", model_called=bool(ctx.generations),
                       reason="No chunk from the connected sources is relevant enough to answer.")
 
-    yield from _generate(ctx, node, prompt.rag_system(ctx.language),
+    yield from _generate(ctx, node, prompt.rag_system(ctx.language, node.config.get("instructions"), ctx.roman),
                          prompt.rag_prompt(_with_history(ctx), evidence, detailed=ctx.detailed, language=ctx.language), "answer", stream_text=True)
     ctx.answer = ctx.generations[-1].text
     checked = citations.check(ctx.answer, evidence)
     ctx.citations = checked["citations"]
+    if (citations.is_dont_know(ctx.answer) or not ctx.citations) and ctx.about_app:
+        return (yield from about_fallback())
     if citations.is_dont_know(ctx.answer) or not ctx.citations:
         # Either the model said it does not know, or it answered without citing a real chunk.
-        ctx.answer, ctx.supported, ctx.citations = prompt.DONT_KNOW[ctx.language], False, []
+        ctx.answer, ctx.supported, ctx.citations = prompt.dont_know(ctx.language, ctx.roman), False, []
         reason = ("The model found no answer in the sources." if citations.is_dont_know(checked["answer"])
                   else "The model's answer cited no real source chunk, so it was not shown.")
         return finish(mode="rag", model_called=True, reason=reason, invalid_markers=checked["invalid_markers"])
@@ -311,7 +364,7 @@ def run(ctx: RunContext, node: Node, graph: Graph) -> Iterator[dict]:
         verified = {"answer": checked["answer"], "claims": [], "removed": 0, "checked": False}
     ctx.claims = verified["claims"]
     if not verified["answer"]:
-        ctx.answer, ctx.supported, ctx.citations = prompt.DONT_KNOW[ctx.language], False, []
+        ctx.answer, ctx.supported, ctx.citations = prompt.dont_know(ctx.language, ctx.roman), False, []
         return finish(mode="rag", model_called=True, claims=ctx.claims,
                       reason="No sentence of the model's answer was backed by the source it cited.")
     rechecked = citations.check(verified["answer"], evidence)  # keep only citations still used

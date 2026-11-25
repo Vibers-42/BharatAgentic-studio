@@ -11,6 +11,7 @@ import { api } from "../api.js";
 import Icon from "../Icon.jsx";
 import { runPipeline } from "../sse.js";
 import ConfigPanel from "./ConfigPanel.jsx";
+import DesignDialog, { DesignNotes } from "./DesignDialog.jsx";
 import {
   applyEvent, autoLayout, defaultCanvas, edgesWithActivity, errorsByNode, fromGraph, newNode, NODE_KINDS, PALETTE, targetHandle, toGraph,
 } from "./graphModel.js";
@@ -22,7 +23,7 @@ const DRAG_TYPE = "application/x-bharat-node";
 const NO_ERRORS = { byNode: {}, general: [] };
 const PALETTE_HINT = {
   pdf: "Upload a PDF", url: "Fetch a docs page", repo: "Index a GitHub repository",
-  calculator: "Exact arithmetic", mcp: "Read-only orders lookup",
+  calculator: "Exact arithmetic", mcp: "Orders lookup; actions need approval",
 };
 
 function BuilderInner({ project }) {
@@ -48,10 +49,14 @@ function BuilderInner({ project }) {
   const [result, setResult] = useState(null);
   const [log, setLog] = useState([]);
   const [runTools, setRunTools] = useState([]);
+  const [approvals, setApprovals] = useState([]);  // risky tool calls waiting for (or given) the user's decision
   const [runError, setRunError] = useState("");
   const [busy, setBusy] = useState(false);
   const [panel, setPanel] = useState("inspect");
+  const [designing, setDesigning] = useState(false);   // the "generate from a description" dialog is open
+  const [design, setDesign] = useState(null);          // notes about the last generated agent
   const questionRef = useRef(null);
+  const runAbort = useRef(null);  // Stop: cancels the streaming run (the api stops when the stream closes)
   const canvasRef = useRef(null);
 
   // Fit the drawing to the canvas whenever the canvas gets a new size: when the builder is first shown
@@ -198,6 +203,7 @@ function BuilderInner({ project }) {
     setStreamed("");
     setLog([]);
     setRunTools([]);
+    setApprovals([]);
     setRunError("");
   }
 
@@ -215,6 +221,7 @@ function BuilderInner({ project }) {
       setSavedJson(JSON.stringify(toGraph(g.nodes, g.edges)) + label);
       setErrors(NO_ERRORS);
       setSelectedId(null);
+      setDesign(null);
       resetRun();
       setTimeout(() => flow.fitView({ padding: 0.15, maxZoom: 1, duration: 300 }), 50);
       say(`Opened “${label}”.`);
@@ -233,8 +240,34 @@ function BuilderInner({ project }) {
     setSavedJson(null);
     setErrors(NO_ERRORS);
     setSelectedId(null);
+    setDesign(null);
     resetRun();
     setTimeout(() => flow.fitView({ padding: 0.15, maxZoom: 1, duration: 300 }), 50);
+  }
+
+  // A generated agent replaces the canvas as a new, unsaved agent; its notes show beside the canvas.
+  function applyDesign(data) {
+    const g = fromGraph(data.graph);
+    refreshSources();  // the design may reuse sources added since the builder opened (another tab, the API)
+    setNodes(g.nodes);
+    setEdges(g.edges);
+    setGraphId(null);
+    setMeta(null);
+    setName(data.name || "My agent");
+    setSavedJson(null);
+    setErrors(NO_ERRORS);
+    setSelectedId(null);
+    resetRun();
+    setDesign(data);
+    setDesigning(false);
+    setPanel("inspect");
+    setTimeout(() => flow.fitView({ padding: 0.15, maxZoom: 1, duration: 300 }), 50);
+    say(`Designed “${data.name}” with ${data.generation.label.split(":")[0]} in ${(data.generation.ms / 1000).toFixed(1)} s. Save it to use it in Chat.`);
+  }
+
+  function askSuggested(q) {
+    setQuestion(q);
+    openRun();
   }
 
   async function run(e) {
@@ -254,6 +287,7 @@ function BuilderInner({ project }) {
       const body = canEdit
         ? { question, graph: graph(), ...(graphId ? { graph_id: graphId } : { project_id: project.id }) }
         : { question, graph_id: graphId };
+      runAbort.current = new AbortController();
       await runPipeline(body, (ev) => {
         if (ev.type !== "token") setLog((l) => [...l, { t: performance.now() - t0, ev }]);
         setStatuses((s) => applyEvent(s, ev));
@@ -267,11 +301,13 @@ function BuilderInner({ project }) {
           setToolActivity((a) => ({ ...a, [ev.node_id]: ev }));
           setRunTools((t) => [...t.filter((x) => !(x.pending && x.node_id === ev.node_id)), ev]);
         }
+        if (ev.type === "approval_required") setApprovals((a) => [...a, { ask: ev, decision: null }]);
+        if (ev.type === "approval_result") setApprovals((a) => a.map((x) => (x.ask.approval_id === ev.approval_id ? { ...x, decision: ev.decision } : x)));
         if (ev.type === "result") setResult(ev);
         if (ev.type === "error") setRunError(ev.code === "access_revoked" ? "Your access to this project was removed." : `${ev.stage}: ${ev.message}`);
-      });
+      }, runAbort.current.signal);
     } catch (err) {
-      setRunError(err.message);
+      setRunError(err.name === "AbortError" ? "Stopped. The run was cancelled." : err.message);
     } finally {
       setBusy(false);
     }
@@ -301,6 +337,10 @@ function BuilderInner({ project }) {
             <option value="">Open agent…</option>
             {saved.map((s) => <option key={s.id} value={s.id}>#{s.id} · {s.name} ({s.created_by_name})</option>)}
           </select>
+          <button className="btn accent-soft" onClick={() => setDesigning(true)} disabled={!project.can_contribute}
+            title={project.can_contribute ? "Describe the use case and get a ready agent" : "Only contributors can create agents"}>
+            <Icon name="sparkle" size={15} /> <span className="hide-sm">Generate</span>
+          </button>
           <button className="btn ghost" onClick={startNew} title="Start a new agent"><Icon name="newfile" size={15} /> <span className="hide-sm">New</span></button>
           <button className="btn ghost" onClick={tidy} title="Tidy the layout"><Icon name="builder" size={15} /> <span className="hide-sm">Tidy</span></button>
           <button className="btn ghost" onClick={() => validate(false)} title="Check the agent for problems"><Icon name="validate" size={15} /> <span className="hide-sm">Validate</span></button>
@@ -365,18 +405,23 @@ function BuilderInner({ project }) {
             </button>
           </div>
           <div className="side-panel-body">
-            {panel === "inspect" ? (
+            {panel === "inspect" && !selected && design ? (
+              <DesignNotes design={design} onSelectNode={setSelectedId} onAsk={askSuggested} onDismiss={() => setDesign(null)} />
+            ) : panel === "inspect" ? (
               <ConfigPanel node={selected} models={models} project={project} tools={tools} sources={sources} canEdit={canEdit}
                 connected={!!selected && edges.some((e) => e.source === selected.id && e.target === agentId)}
                 onConnect={setConnected} onConfig={updateConfig} onDelete={removeSelected}
                 errors={selected ? errors.byNode[selected.id] : null} onChangedSources={refreshSources} />
             ) : (
               <RunConsole question={question} setQuestion={setQuestion} onRun={run} busy={busy} log={log}
-                streamed={streamed} result={result} toolCalls={runTools} runError={runError} agentInfo={agentInfo} inputRef={questionRef} />
+                streamed={streamed} result={result} toolCalls={runTools} runError={runError} approvals={approvals}
+                onStop={() => runAbort.current?.abort()} agentInfo={agentInfo} inputRef={questionRef} />
             )}
           </div>
         </aside>
       </div>
+
+      {designing && <DesignDialog project={project} onClose={() => setDesigning(false)} onDesigned={applyDesign} />}
 
       {toast && (
         <div key={toast.id} className={`toast ${toast.tone}`} role="status">

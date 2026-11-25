@@ -129,13 +129,16 @@ def test_failed_gemini_falls_back_to_local(monkeypatch, default_graph):
     def broken(system, prompt, **kwargs):
         raise gemini.GeminiError("GEMINI_API_KEY is not set", code="no_key")
         yield  # pragma: no cover
+    from app.models import groq
     monkeypatch.setattr(gemini, "stream", broken)
+    monkeypatch.setattr(groq, "stream", broken)  # the other cloud model is tried first; make it unavailable too
     events = run(default_graph, "hello there")
-    fallback = next(e for e in events if e["type"] == "fallback")
-    assert fallback["from"] == "gemini" and fallback["to"] == "local" and fallback["code"] == "no_key"
+    hops = [(e["from"], e["to"]) for e in events if e["type"] == "fallback"]
+    assert hops == [("gemini", "groq"), ("groq", "local")]
     result = events[-1]
     assert result["type"] == "result" and result["model"].startswith("local:")
-    assert result["fallback"]["from"] == "gemini" and result["model_requested"] == "gemini"
+    assert result["fallback"]["from"] == "gemini" and result["fallback"]["to"] == "local"
+    assert result["fallback"]["code"] == "no_key" and result["model_requested"] == "gemini"
 
 
 def test_all_models_failing_gives_one_clear_error(monkeypatch, default_graph):
@@ -146,13 +149,15 @@ def test_all_models_failing_gives_one_clear_error(monkeypatch, default_graph):
             raise gemini.GeminiError(f"{code} happened", code=code)
             yield  # pragma: no cover
         return stream
+    from app.models import groq
     monkeypatch.setattr(gemini, "stream", broken("quota_daily"))
+    monkeypatch.setattr(groq, "stream", broken("no_key"))
     monkeypatch.setattr(ollama, "stream", broken("network_error"))
     events = run(default_graph, "hello there")
     error = events[-1]
     assert error["type"] == "error" and error["code"] == "all_providers_failed" and error["stage"] == "agent"
     assert [(a["model"], a["code"]) for a in error["attempts"]] == [
-        ("gemini", "quota_daily"), ("local", "network_error"), ("local_small", "network_error")]
+        ("gemini", "quota_daily"), ("groq", "no_key"), ("local", "network_error"), ("local_small", "network_error")]
     assert "Every model failed" in error["message"]
     assert not any(e["type"] == "result" for e in events)
 

@@ -21,12 +21,15 @@ from fastapi.responses import StreamingResponse
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
-from .. import knowledge
+from .. import budgets, knowledge, usage
 from ..access import project_access, require_conversation, require_graph, require_project
 from ..auth import User, current_user
 from ..config import settings
 from ..db import get_conn
-from ..models.generate import is_local
+from ..models import pricing
+from ..models.generate import AllProvidersFailed, LocalOnlyError, is_local
+from ..pipeline import designer
+from ..tools import approvals
 from ..pipeline.engine import run_pipeline
 from ..pipeline.graph import MODELS, SOURCE_TYPES, Graph
 from ..pipeline.validate import validate_graph
@@ -53,6 +56,72 @@ class RunRequest(BaseModel):
 @router.get("/default")
 def default_graph(user: User = Depends(current_user)):
     return json.loads(DEFAULT_GRAPH.read_text(encoding="utf-8"))
+
+
+class DesignRequest(BaseModel):
+    description: str
+    project_id: int
+    local_only: bool = False
+
+
+@router.post("/design")
+def design(req: DesignRequest, user: User = Depends(current_user)):
+    """Describe the use case, get a ready agent: the model fills in a small design, the api compiles it into a
+    valid graph (see pipeline/designer.py). Needs contributor rights, like drawing an agent by hand. Nothing is
+    saved: the canvas opens the result and the user saves it. The model call is logged as usage."""
+    access = require_project(user, req.project_id, "contribute")
+    description = req.description.strip()
+    if len(description) < 10:
+        raise HTTPException(422, "Describe the use case in a sentence or two (at least 10 characters).")
+    if len(description) > designer.MAX_DESCRIPTION:
+        raise HTTPException(422, f"Please keep the description under {designer.MAX_DESCRIPTION} characters.")
+    local_only = req.local_only or access.local_only or settings.local_only
+    refusal, _ = budgets.check(req.project_id)
+    if refusal and not local_only:
+        raise HTTPException(402, refusal)
+    existing = knowledge.ready_sources(req.project_id)
+    try:
+        plan, graph, gen = designer.design_agent(description, existing, local_only=local_only)
+    except AllProvidersFailed as exc:
+        raise HTTPException(503, f"No model could design the agent right now. {exc}")
+    except (designer.DesignError, LocalOnlyError) as exc:
+        raise HTTPException(422, str(exc))
+    price = pricing.cost(gen.model_id, gen.input_tokens, gen.output_tokens, local=is_local(gen.model))
+    try:
+        usage.log(user_id=user.id, model=gen.label, model_requested=gen.model_requested,
+                  input_tokens=gen.input_tokens, output_tokens=gen.output_tokens, tokens_estimated=gen.tokens_estimated,
+                  cost_usd=price["usd"], cost_inr=price["inr"], response_ms=gen.response_ms,
+                  local_compute_ms=gen.response_ms if is_local(gen.model) else 0, sources=[], language=plan.language,
+                  fallback_from=gen.fallback["from"] if gen.fallback else None, org_id=access.org_id,
+                  project_id=req.project_id)
+    except Exception:  # never lose the design because the usage row could not be written
+        pass
+    return {
+        "graph": graph.model_dump(by_alias=True, exclude_none=True),
+        "name": plan.name,
+        "summary": plan.summary,
+        "reasons": plan.reasons,
+        "suggested_questions": plan.suggested_questions,
+        "todo": designer.todo_steps(plan),
+        "reused_sources": [s["title"] for s in plan.sources if s.get("source_ref") is not None],
+        "generation": {"model": gen.model, "label": gen.label, "ms": gen.response_ms,
+                       "input_tokens": gen.input_tokens, "output_tokens": gen.output_tokens,
+                       "cost_inr": price["inr"], "fallback": gen.fallback},
+    }
+
+
+class Decision(BaseModel):
+    approve: bool
+
+
+@router.post("/approvals/{approval_id}")
+def decide_approval(approval_id: str, req: Decision, user: User = Depends(current_user)):
+    """Approve or deny a paused tool call. Only the person whose question is waiting can decide, once; anyone
+    else (or a decided / timed-out approval) gets 404."""
+    decision = approvals.decide(approval_id, user.id, req.approve)
+    if decision is None:
+        raise HTTPException(404, "No such pending approval (it may have timed out or been decided already).")
+    return {"approval_id": approval_id, "decision": decision}
 
 
 @router.post("/validate")
@@ -177,6 +246,13 @@ def run(req: RunRequest, stream: bool = True, user: User = Depends(current_user)
         why = "this project is local-only" if access.local_only else "local-only mode is on"
         raise HTTPException(400, f"Cloud models cannot be used because {why}. Choose 'local' or 'local_small'.")
 
+    # Spend limits are checked before anything is saved or any model is called (local models cost nothing).
+    refusal, budget_warnings = budgets.check(project_id, conversation["id"] if conversation else None)
+    if refusal:
+        if not is_local(model):
+            raise HTTPException(402, refusal)
+        local_only = True  # over the limit: a local model may still answer, but never fall back to a paid cloud API
+
     history, previous_citations = _history(conversation["id"]) if conversation else ([], [])
     if conversation:
         try:
@@ -189,11 +265,13 @@ def run(req: RunRequest, stream: bool = True, user: User = Depends(current_user)
              "conversation_id": conversation["id"] if conversation else None}
     events = run_pipeline(graph, req.question, req.language, req.model, user.id, knowledge.scope_of(project_id),
                           local_only, source_map=source_map, history=history, owner=owner,
-                          previous_citations=previous_citations)
+                          previous_citations=previous_citations, can_approve=stream)
 
     def guarded():
         """Re-check access while streaming; store the final answer (or the error) in the conversation."""
         last_check = time.monotonic()
+        for warning in budget_warnings:
+            yield {"type": "budget", "stage": "input", "node_id": None, "level": "warning", "message": warning}
         for ev in events:
             if time.monotonic() - last_check > RECHECK_SECONDS:
                 last_check = time.monotonic()
