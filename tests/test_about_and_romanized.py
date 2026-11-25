@@ -30,6 +30,8 @@ def test_romanized_language(text, expected):
     ("nuvvu evaru", "you"),
     ("तुम कौन हो", "you"),
     ("What is the refund policy?", None),
+    ("What can you do about my refund for the cancelled lab test?", None),  # a real question, not "who are you"
+    ("Can you tell me who are you supposed to call for refunds?", None),
 ])
 def test_about_app(text, expected):
     assert about_app(text) == expected
@@ -98,3 +100,15 @@ def test_who_are_you_answers_directly_without_searching(default_graph, monkeypat
     systems, result = run_question("who are you?", default_graph, monkeypatch)
     assert len(systems) == 1 and prompt.ABOUT_APP in systems[0]
     assert result["grounded"] is False
+
+
+def test_local_only_design_without_a_local_model_says_what_to_install(monkeypatch):
+    from types import SimpleNamespace
+    from app.routes import models as model_routes
+    from app.routes import pipeline
+    monkeypatch.setattr(model_routes, "_local_pulled", lambda model_id: False)
+    steps = pipeline._local_model_step(SimpleNamespace(local_only=True))
+    assert len(steps) == 1 and "ollama pull" in steps[0]["text"]
+    monkeypatch.setattr(model_routes, "_local_pulled", lambda model_id: True)
+    assert pipeline._local_model_step(SimpleNamespace(local_only=True)) == []
+    assert pipeline._local_model_step(SimpleNamespace(local_only=False)) == []

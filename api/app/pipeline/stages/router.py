@@ -31,9 +31,12 @@ ABOUT_YOU = re.compile(
 APP_NAME = re.compile(r"bharat\s*agent|భారత్\s*ఏజెంట్|भारत\s*एजेंट", re.I)
 
 
+ABOUT_YOU_MAX_WORDS = 6  # "who are you?", "what can you do", "nuvvu evaru": short; longer ones ask about something else
+
+
 def about_app(question: str) -> str | None:
     """'you' when the question asks who or what the assistant is, 'name' when it names BharatAgent, else None."""
-    if ABOUT_YOU.search(question):
+    if ABOUT_YOU.search(question) and len(question.split()) <= ABOUT_YOU_MAX_WORDS:
         return "you"
     if APP_NAME.search(question):
         return "name"

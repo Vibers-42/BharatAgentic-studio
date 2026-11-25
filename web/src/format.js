@@ -72,3 +72,11 @@ export function niceMax(v) {
   const p = 10 ** Math.floor(Math.log10(v));
   return [1, 2, 5, 10].map((m) => m * p).find((x) => x >= v);
 }
+
+// Tool arguments as shown on an answer: one argument by value ("1200 * 80%"), several with their names, because
+// stored arguments come back in a different key order (order_id: "ORD-1004", reason: "...").
+export function toolArgs(args) {
+  const entries = Object.entries(args || {});
+  if (entries.length === 1) return JSON.stringify(entries[0][1]);
+  return entries.map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(", ");
+}

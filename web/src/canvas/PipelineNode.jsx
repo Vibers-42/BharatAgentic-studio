@@ -46,7 +46,7 @@ function ToolLine({ data }) {
 function agentSummary(data) {
   const c = data.config;
   const lang = { en: "English", te: "Telugu", hi: "Hindi" }[c.language || "en"];
-  return `${data.modelLabel || c.model || "gemini"} · ${lang}`;
+  return `${data.modelLabel || c.model || "groq"} · ${lang}`;
 }
 
 export default function PipelineNode({ id, data, selected }) {

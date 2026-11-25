@@ -55,3 +55,11 @@ describe("quick chat graph", () => {
     expect(TOOLS.find((t) => t.kind === "mcp").config).toEqual({ server: "orders-db", mode: "read_only" });
   });
 });
+
+import { toolArgs } from "./format.js";
+
+it("tool arguments: one by value, several with their names", () => {
+  expect(toolArgs({ expression: "1200 * 80%" })).toBe('"1200 * 80%"');
+  expect(toolArgs({ reason: "not needed", order_id: "ORD-1004" })).toBe('reason: "not needed", order_id: "ORD-1004"');
+  expect(toolArgs({})).toBe("");
+});

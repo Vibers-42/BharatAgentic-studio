@@ -277,7 +277,7 @@ def run(ctx: RunContext, node: Node, graph: Graph) -> Iterator[dict]:
     ctx.tools = [n for n in connected if n.type in TOOL_TYPES]
     # The chat's model dropdown wins over the agent node's setting. Local-only can come from the request,
     # the agent node, or the server (LOCAL_ONLY in .env); any of them is enough.
-    ctx.model_key = ctx.requested_model or node.config.get("model", "gemini")
+    ctx.model_key = ctx.requested_model or node.config.get("model", "groq")
     ctx.local_only = ctx.local_only or node.config.get("local_only") is True or settings.local_only
     detail = {
         "model_requested": ctx.model_key,

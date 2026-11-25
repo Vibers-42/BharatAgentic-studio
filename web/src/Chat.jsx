@@ -80,7 +80,8 @@ export default function Chat({ project }) {
 
   const forcedLocal = project.local_only;
   const offLocal = forcedLocal || localOnly;
-  const visibleModels = models.filter((m) => !offLocal || m.local);
+  // Only models that are set up are offered (no "not set up" entries in a demo); the current choice always stays.
+  const visibleModels = models.filter((m) => (!offLocal || m.local) && (m.ready || m.key === model));
   useEffect(() => { if (offLocal && !models.find((m) => m.key === model)?.local) setModel("local"); }, [offLocal, models, model]);
 
   async function openConv(id) {
@@ -102,7 +103,7 @@ export default function Chat({ project }) {
     try {
       if (!conv) {
         const created = await api("/conversations", { method: "POST", body: { project_id: project.id, graph_id: agentId ? Number(agentId) : null, title: q.slice(0, 80) } });
-        conv = { ...created, messages: [] };
+        conv = { ...created, messages: [], justCreated: true };
         setActive(conv);
         loadConvs();
       }
@@ -134,7 +135,14 @@ export default function Chat({ project }) {
     patch(() => ({ busy: false }));
     // A question refused before it started (spend limit, validation) is not stored, so keep it on screen with its
     // reason instead of reloading the conversation over it.
-    if (refused) { loadConvs(); return; }
+    if (refused) {
+      if (conv.justCreated) {  // nothing was stored in it: remove it again, keep the refusal on screen
+        try { await api(`/conversations/${conv.id}`, { method: "DELETE" }); } catch { /* keep it */ }
+        setActive(null);
+      }
+      loadConvs();
+      return;
+    }
     try { setActive(await api(`/conversations/${conv.id}`)); setLive(null); loadConvs(); } catch { /* keep the live view */ }
   }
 

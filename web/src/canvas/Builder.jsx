@@ -55,6 +55,8 @@ function BuilderInner({ project }) {
   const [panel, setPanel] = useState("inspect");
   const [designing, setDesigning] = useState(false);   // the "generate from a description" dialog is open
   const [design, setDesign] = useState(null);          // notes about the last generated agent
+  const [designSeed, setDesignSeed] = useState("");     // an example picked on the start card, prefilled in the dialog
+  const [heroHidden, setHeroHidden] = useState(false);  // the start card was dismissed
   const questionRef = useRef(null);
   const runAbort = useRef(null);  // Stop: cancels the streaming run (the api stops when the stream closes)
   const canvasRef = useRef(null);
@@ -261,7 +263,9 @@ function BuilderInner({ project }) {
     setDesign(data);
     setDesigning(false);
     setPanel("inspect");
+    // Fit once the new blocks are drawn, and again after React Flow has measured them (sizes arrive a moment later).
     setTimeout(() => flow.fitView({ padding: 0.15, maxZoom: 1, duration: 300 }), 50);
+    setTimeout(() => flow.fitView({ padding: 0.15, maxZoom: 1, duration: 300 }), 400);
     say(`Designed “${data.name}” with ${data.generation.label.split(":")[0]} in ${(data.generation.ms / 1000).toFixed(1)} s. Save it to use it in Chat.`);
   }
 
@@ -318,8 +322,11 @@ function BuilderInner({ project }) {
     setTimeout(() => questionRef.current?.focus(), 30);
   }
 
+  // A fresh, untouched canvas invites the headline feature: describe the assistant and let it be built.
+  const showHero = !heroHidden && !graphId && !design && canEdit && project.can_contribute && nodes.length === 5;
+
   const problemCount = errors.general.length + Object.values(errors.byNode).reduce((n, m) => n + m.length, 0);
-  const agentModel = agent ? models.find((m) => m.key === (agent.data.config.model || "gemini")) : null;
+  const agentModel = agent ? models.find((m) => m.key === (agent.data.config.model || "groq")) : null;
   const agentInfo = agent ? `Runs on ${agentModel?.label || agent.data.config.model}${agent.data.config.local_only ? " · local only" : ""}` : "";
 
   return (
@@ -337,7 +344,7 @@ function BuilderInner({ project }) {
             <option value="">Open agent…</option>
             {saved.map((s) => <option key={s.id} value={s.id}>#{s.id} · {s.name} ({s.created_by_name})</option>)}
           </select>
-          <button className="btn accent-soft" onClick={() => setDesigning(true)} disabled={!project.can_contribute}
+          <button className="btn magic" onClick={() => { setDesignSeed(""); setDesigning(true); }} disabled={!project.can_contribute}
             title={project.can_contribute ? "Describe the use case and get a ready agent" : "Only contributors can create agents"}>
             <Icon name="sparkle" size={15} /> <span className="hide-sm">Generate</span>
           </button>
@@ -365,6 +372,9 @@ function BuilderInner({ project }) {
               <span><b>{problemCount} problem{problemCount > 1 ? "s" : ""}</b> · {[...errors.general, ...Object.entries(errors.byNode).map(([id, m]) => `${id}: ${m[0]}`)][0]}</span>
               <button className="btn ghost sm" onClick={() => setErrors(NO_ERRORS)} aria-label="Dismiss problems"><Icon name="x" size={14} /></button>
             </div>
+          )}
+          {showHero && (
+            <StartCard onGenerate={(seed) => { setDesignSeed(seed || ""); setDesigning(true); }} onDismiss={() => setHeroHidden(true)} />
           )}
           <div className="canvas" data-testid="canvas" ref={canvasRef} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }} onDrop={onDrop}>
             <ReactFlow
@@ -421,7 +431,7 @@ function BuilderInner({ project }) {
         </aside>
       </div>
 
-      {designing && <DesignDialog project={project} onClose={() => setDesigning(false)} onDesigned={applyDesign} />}
+      {designing && <DesignDialog project={project} initial={designSeed} onClose={() => setDesigning(false)} onDesigned={applyDesign} />}
 
       {toast && (
         <div key={toast.id} className={`toast ${toast.tone}`} role="status">
@@ -429,6 +439,30 @@ function BuilderInner({ project }) {
         </div>
       )}
     </section>
+  );
+}
+
+const START_EXAMPLES = [
+  ["Clinic · Telugu", "Answer patient questions about our clinic's refund and cancellation policy in Telugu, and work out refund amounts."],
+  ["College · Hindi", "Help students of our college find admission dates, fees and hostel rules from the prospectus, in Hindi."],
+  ["Pharmacy desk", "Front desk agent for our clinic pharmacy: look up order status and cancel orders when patients ask, in English."],
+];
+
+function StartCard({ onGenerate, onDismiss }) {
+  return (
+    <div className="start-card" role="region" aria-label="Start with a description">
+      <button className="btn ghost icon-btn sm start-close" onClick={onDismiss} aria-label="Hide and build by hand"><Icon name="x" size={14} /></button>
+      <span className="start-icon"><Icon name="sparkle" size={22} /></span>
+      <h3>Describe your assistant</h3>
+      <p className="muted">One sentence is enough. BharatAgent picks the sources, tools, language and guardrails, and draws the agent here.</p>
+      <div className="start-examples">
+        {START_EXAMPLES.map(([label, text]) => (
+          <button key={label} type="button" className="suggestion" onClick={() => onGenerate(text)} title={text}>{label}</button>
+        ))}
+      </div>
+      <button className="btn magic lg" onClick={() => onGenerate("")}><Icon name="sparkle" size={16} /> Generate an agent</button>
+      <span className="muted small">or drag blocks from the left to build it by hand</span>
+    </div>
   );
 }
 

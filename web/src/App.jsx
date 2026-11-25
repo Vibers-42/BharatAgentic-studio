@@ -102,6 +102,7 @@ function Shell({ session, screen, reload, themeButton, onSignedOut }) {
   const [projectId, setProjectId] = useState(() => Number(recall("project")) || null);
   const [drawer, setDrawer] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [builderOpened, setBuilderOpened] = useState(null);  // project id whose builder is kept alive across tabs
 
   const loadProjects = useCallback(() => {
     if (!org) return Promise.resolve();
@@ -118,6 +119,7 @@ function Shell({ session, screen, reload, themeButton, onSignedOut }) {
   useEffect(() => { if (projectId) remember("project", projectId); }, [projectId]);
 
   const project = projects?.find((p) => p.id === projectId) || null;
+  useEffect(() => { if (screen === "agents" && project) setBuilderOpened(project.id); }, [screen, project]);
   const isAdmin = org && ["owner", "admin"].includes(org.role);
   const visible = SCREENS.filter(([key]) => (key === "members" ? org?.kind === "company" : key === "settings" ? true : true));
 
@@ -200,7 +202,12 @@ function Shell({ session, screen, reload, themeButton, onSignedOut }) {
           {screen === "overview" && <Overview {...ctx} />}
           {screen === "projects" && <Projects {...ctx} />}
           {screen === "knowledge" && <Gate project={project}><Knowledge {...ctx} /></Gate>}
-          {screen === "agents" && <Gate project={project}><Builder key={project?.id} {...ctx} /></Gate>}
+          {/* The builder stays mounted (only hidden) once opened, so an unsaved or generated agent, its run and its
+              canvas survive a visit to another tab. A new project gets a fresh builder (key). */}
+          {project && (screen === "agents" || builderOpened === project.id) && (
+            <div className="keep-alive" hidden={screen !== "agents"}><Builder key={project.id} {...ctx} /></div>
+          )}
+          {screen === "agents" && !project && <Gate project={project} />}
           {screen === "chat" && <Gate project={project}><Chat key={project?.id} {...ctx} /></Gate>}
           {screen === "usage" && <Dashboard {...ctx} />}
           {screen === "members" && <Members {...ctx} />}

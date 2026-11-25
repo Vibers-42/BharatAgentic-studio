@@ -58,6 +58,18 @@ def default_graph(user: User = Depends(current_user)):
     return json.loads(DEFAULT_GRAPH.read_text(encoding="utf-8"))
 
 
+def _local_model_step(plan) -> list[dict]:
+    """A next step when the designed agent is local-only but no local model is installed yet."""
+    if not plan.local_only:
+        return []
+    from ..models.generate import PROVIDERS
+    from .models import _local_pulled
+    if any(_local_pulled(PROVIDERS[key].model_id()) for key in ("local", "local_small")):
+        return []
+    return [{"node_id": "n4", "text": "Local only needs a model on this computer: run "
+             "docker compose exec ollama ollama pull qwen2.5:3b (or switch Local only off on the Agent)"}]
+
+
 class DesignRequest(BaseModel):
     description: str
     project_id: int
@@ -102,7 +114,7 @@ def design(req: DesignRequest, user: User = Depends(current_user)):
         "summary": plan.summary,
         "reasons": plan.reasons,
         "suggested_questions": plan.suggested_questions,
-        "todo": designer.todo_steps(plan),
+        "todo": designer.todo_steps(plan) + _local_model_step(plan),
         "reused_sources": [s["title"] for s in plan.sources if s.get("source_ref") is not None],
         "generation": {"model": gen.model, "label": gen.label, "ms": gen.response_ms,
                        "input_tokens": gen.input_tokens, "output_tokens": gen.output_tokens,
@@ -241,7 +253,7 @@ def run(req: RunRequest, stream: bool = True, user: User = Depends(current_user)
         raise HTTPException(400, f"Unknown model '{req.model}'. Choose one of: {', '.join(MODELS)}.")
     agent = graph.of_type("agent")[0]
     local_only = (req.local_only or agent.config.get("local_only") is True or access.local_only or settings.local_only)
-    model = req.model or agent.config.get("model", "gemini")
+    model = req.model or agent.config.get("model", "groq")
     if local_only and not is_local(model):
         why = "this project is local-only" if access.local_only else "local-only mode is on"
         raise HTTPException(400, f"Cloud models cannot be used because {why}. Choose 'local' or 'local_small'.")

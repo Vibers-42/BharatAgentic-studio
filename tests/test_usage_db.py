@@ -90,6 +90,17 @@ def test_unpriced_model_logs_null_cost(bob, default_graph, monkeypatch):
     assert row["model"].startswith("groq:") and row["cost_usd"] is None
 
 
+def _no_groq(monkeypatch):
+    """Groq answers when Gemini fails (fallback order); make it unavailable so the chain reaches the local model."""
+    from app.models import groq
+    from app.models.base import ProviderError
+
+    def no_key(system, prompt, **kwargs):
+        raise ProviderError("GROQ_API_KEY is not set", code="no_key")
+        yield  # pragma: no cover
+    monkeypatch.setattr(groq, "stream", no_key)
+
+
 def test_fallback_is_logged(bob, default_graph, monkeypatch):
     from app.models import gemini
     from app.models.base import QuotaError
@@ -98,6 +109,7 @@ def test_fallback_is_logged(bob, default_graph, monkeypatch):
         raise QuotaError("daily", "used up")
         yield  # pragma: no cover
     monkeypatch.setattr(gemini, "stream", limited)
+    _no_groq(monkeypatch)  # the other cloud model is tried before the local ones; keep this test offline
     result = ask(bob, default_graph, "gemini")
     row = latest(bob)
     assert result["model"].startswith("local:") and row["fallback_from"] == "gemini" and row["status"] == "ok"
@@ -113,6 +125,7 @@ def test_total_failure_is_logged_as_error(bob, default_graph, monkeypatch):
         yield  # pragma: no cover
     monkeypatch.setattr(gemini, "stream", broken)
     monkeypatch.setattr(ollama, "stream", broken)
+    _no_groq(monkeypatch)
     r = bob.post("/pipeline/run?stream=false", json={"question": "hello there", "graph": default_graph,
                                                       "project_id": bob.project})
     assert r.json()["events"][-1]["code"] == "all_providers_failed"

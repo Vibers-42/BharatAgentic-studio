@@ -3,7 +3,7 @@
 // counts (actual or estimated), the estimated cost, and the same tokens priced on the other models.
 // Costs are estimates from prices.json, not a bill.
 import { useState } from "react";
-import { inr, secs, splitCitations, usd } from "./format.js";
+import { inr, secs, splitCitations, usd, toolArgs } from "./format.js";
 import Icon from "./Icon.jsx";
 
 function costText(cost) {
@@ -44,7 +44,7 @@ export function ToolCalls({ calls }) {
       {calls.map((t, i) => (
         <li key={i} className={t.pending ? "pending" : t.ok ? "ok" : "err"}>
           <Icon name={t.tool === "calculator" ? "calculator" : "mcp"} size={14} />
-          <span className="mono">{t.tool}({Object.values(t.args || {}).map((v) => JSON.stringify(v)).join(", ")})</span>
+          <span className="mono">{t.tool}({toolArgs(t.args)})</span>
           {t.pending ? <span className="muted">running…</span> : t.ok ? (
             <span className="tool-out mono" title={t.output}>→ {t.tool === "calculator" ? t.output.split(" = ").pop() : "result returned"}</span>
           ) : <span className="tool-out err" title={t.error}>✕ {t.error}</span>}

@@ -308,14 +308,14 @@ def test_conversations_are_private_and_keep_context(world, monkeypatch):
 
 
 def test_failed_answer_is_stored_as_an_error_not_an_answer(world, monkeypatch):
-    from app.models import gemini, ollama
+    from app.models import gemini, groq, ollama
     from app.models.base import ProviderError
 
     def broken(system, prompt, **kwargs):
         raise ProviderError("down", code="network_error")
         yield  # pragma: no cover
-    monkeypatch.setattr(gemini, "stream", broken)
-    monkeypatch.setattr(ollama, "stream", broken)
+    for provider in (gemini, groq, ollama):  # every model in the fallback chain is down
+        monkeypatch.setattr(provider, "stream", broken)
     c = world["c"]
     conv = c.post("/conversations", json={"project_id": world["proj"], "graph_id": world["graph"]}).json()["id"]
     r, events = c.ask(question="refund policy", conversation_id=conv)
@@ -528,7 +528,7 @@ def test_migration_is_recorded_once_and_rerun_is_a_no_op(app):
     from app import migrations
     from app.config import settings
     assert migrations.run(settings.database_url, settings.upload_dir) == []
-    assert sql("SELECT version FROM schema_migrations") == [("0001",)]
+    assert sql("SELECT version FROM schema_migrations ORDER BY version") == [("0001",), ("0002",)]
 
 
 def test_legacy_data_is_quarantined_until_an_operator_assigns_it(app):

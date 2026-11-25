@@ -710,3 +710,23 @@ details.note ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-2); }
 .btn.stop-btn { border-color: var(--err); color: var(--err); background: var(--err-soft); }
 .btn.stop-btn:hover { background: var(--err); color: #fff; }
 .stop-square { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
+
+/* Generate as the builder's hero: a start card on a fresh canvas, and a stand-out button */
+.btn.magic { background: linear-gradient(135deg, var(--accent), #c06bff); border-color: transparent; color: #fff; font-weight: 600; box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 35%, transparent); }
+.btn.magic:hover:not(:disabled) { filter: brightness(1.08); }
+.btn.lg { min-height: 42px; padding: 8px 18px; font-size: 15px; }
+.start-card { position: absolute; z-index: 5; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(440px, calc(100% - 32px)); display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 22px 22px 18px; border-radius: 16px; background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--border); box-shadow: var(--shadow-lg); backdrop-filter: blur(6px); }
+.start-card h3 { margin: 0; font-size: 18px; }
+.start-card p { margin: 0; font-size: 13.5px; }
+.start-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; color: var(--accent); background: var(--accent-soft); }
+.start-examples { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.start-close { position: absolute; top: 8px; right: 8px; }
+/* Run tab: the event log folds under the answer */
+details.event-log > summary { cursor: pointer; list-style: none; user-select: none; }
+details.event-log > summary::-webkit-details-marker { display: none; }
+details.event-log > summary::before { content: "▸ "; color: var(--text-3); }
+details.event-log[open] > summary::before { content: "▾ "; }
+
+/* The builder stays mounted while another tab is open (App.jsx keep-alive), so its work is not lost */
+.keep-alive { display: contents; }
+.keep-alive[hidden] { display: none; }

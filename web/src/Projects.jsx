@@ -85,7 +85,7 @@ function BudgetCard({ p, onSave }) {
           const body = {};
           if (monthly !== "") body.budget_month_inr = Number(monthly);
           if (perConv !== "") body.budget_conversation_inr = Number(perConv);
-          if (Object.keys(body).length) onSave(body).then(() => { setMonthly(""); setPerConv(""); });
+          if (Object.keys(body).length) onSave(body).then((ok) => { if (ok) { setMonthly(""); setPerConv(""); } });
         }}>
           <label className="field"><span className="field-label">Monthly limit (₹)</span>
             <input type="number" min="0" step="0.01" inputMode="decimal" value={monthly} onChange={(e) => setMonthly(e.target.value)}
@@ -119,7 +119,7 @@ function ProjectDetail({ id, org, reloadProjects }) {
 
   async function act(fn) {
     setError("");
-    try { await fn(); load(); reloadProjects(); } catch (err) { setError(err.message); }
+    try { await fn(); load(); reloadProjects(); return true; } catch (err) { setError(err.message); return false; }
   }
   if (!p) return <div className="card"><div className="skeleton-line" />{error && <p className="inline-msg err">{error}</p>}</div>;
   const assignable = orgMembers.filter((m) => m.status === "active" && m.role === "member" && !members.some((x) => x.user_id === m.user_id));

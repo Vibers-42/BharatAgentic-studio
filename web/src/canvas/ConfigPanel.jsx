@@ -97,9 +97,9 @@ export default function ConfigPanel({ node, models, project, sources = [], canEd
 
       {type === "agent" && (
         <>
-          <Field label="Model" hint={models.find((m) => m.key === (config.model || "gemini"))?.why_not_ready || "The chat's model choice overrides this for one question."}>
-            <select value={config.model || "gemini"} onChange={(e) => set("model", e.target.value)} aria-label="Agent model">
-              {models.filter((m) => !config.local_only || m.local).map((m) => (
+          <Field label="Model" hint={models.find((m) => m.key === (config.model || "groq"))?.why_not_ready || "The chat's model choice overrides this for one question."}>
+            <select value={config.model || "groq"} onChange={(e) => set("model", e.target.value)} aria-label="Agent model">
+              {models.filter((m) => (!config.local_only || m.local) && (m.ready || m.key === (config.model || "groq"))).map((m) => (
                 <option key={m.key} value={m.key}>{m.label}{m.local ? "" : " · cloud"}{m.ready ? "" : " (not set up)"}</option>
               ))}
             </select>

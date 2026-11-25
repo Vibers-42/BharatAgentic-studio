@@ -64,9 +64,16 @@ export default function RunConsole({ question, setQuestion, onRun, busy, log, st
 
       {approvals.map((a) => <ApprovalCard key={a.ask.approval_id} ask={a.ask} decision={a.decision} />)}
 
+      {(busy || result || streamed) && (
+        <div className="run-answer">
+          <div className="section-label">Answer</div>
+          <AnswerCard streamed={streamed} result={result} busy={busy} toolCalls={toolCalls} />
+        </div>
+      )}
+
       {log.length > 0 && (
-        <div className="event-log" aria-label="Run events">
-          <div className="section-label">Live events <span className="muted">({log.length})</span></div>
+        <details className="event-log" open={busy && !streamed && !result}>
+          <summary className="section-label">Live events <span className="muted">({log.length})</span></summary>
           <ol>
             {log.map((e, i) => (
               <li key={i} className={`ev ${tone(e.ev)}`}>
@@ -76,14 +83,7 @@ export default function RunConsole({ question, setQuestion, onRun, busy, log, st
               </li>
             ))}
           </ol>
-        </div>
-      )}
-
-      {(busy || result || streamed) && (
-        <div className="run-answer">
-          <div className="section-label">Answer</div>
-          <AnswerCard streamed={streamed} result={result} busy={busy} toolCalls={toolCalls} />
-        </div>
+        </details>
       )}
 
       {!busy && !result && !log.length && (

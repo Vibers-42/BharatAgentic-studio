@@ -13,8 +13,8 @@ const EXAMPLES = [
   "Support agent for our shop: look up order status and answer questions from our returns policy page.",
 ];
 
-export default function DesignDialog({ project, onClose, onDesigned }) {
-  const [description, setDescription] = useState("");
+export default function DesignDialog({ project, onClose, onDesigned, initial = "" }) {
+  const [description, setDescription] = useState(initial);
   const [localOnly, setLocalOnly] = useState(!!project.local_only);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

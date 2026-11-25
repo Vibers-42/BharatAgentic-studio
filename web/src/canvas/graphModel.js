@@ -11,7 +11,7 @@ export const NODE_KINDS = {
   input: { type: "input", label: "Input", group: "main", config: {} },
   guardrails: { type: "guardrails", label: "Guardrails", group: "main", config: { block: ["empty", "abuse", "off_topic"] } },
   router: { type: "router", label: "Router", group: "main", config: {} },
-  agent: { type: "agent", label: "Agent", group: "main", config: { model: "gemini", language: "en", local_only: false } },
+  agent: { type: "agent", label: "Agent", group: "main", config: { model: "groq", language: "en", local_only: false } },
   output: { type: "output", label: "Output", group: "main", config: {} },
   pdf: { type: "source_doc", label: "PDF", group: "source", config: { file: "" } },
   url: { type: "source_doc", label: "Docs link", group: "source", config: { url: "" } },
@@ -185,7 +185,7 @@ export function errorsByNode(errors) {
 export function summary(type, config = {}) {
   switch (type) {
     case "agent":
-      return `${config.model || "gemini"} · ${config.language || "en"}${config.local_only ? " · local only" : ""}`;
+      return `${config.model || "groq"} · ${config.language || "en"}${config.local_only ? " · local only" : ""}`;
     case "guardrails":
       return (config.block || []).join(", ") || "no checks";
     case "source_doc":
